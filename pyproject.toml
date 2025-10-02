@@ -1,0 +1,26 @@
+[project]
+name = "bratsam"
+version = "0.1.0"
+description = "Enhancing SAM for Brain Tumor Segmentation"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "nibabel>=5.3.2",
+    "numpy>=2.3.3",
+    "torch>=2.8.0",
+    "torchvision>=0.23.0",
+]
+
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+  { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
