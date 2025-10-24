@@ -15,7 +15,7 @@ def train_one_epoch(model, dataloader, optimizer, loss_fn, device, scaler=None):
     for batch in progress_bar:
         pixel_values = batch["pixel_values"].to(device)
         input_boxes = batch["input_boxes"].to(device)
-        ground_truth_masks = batch["ground_truth_masks"].to(device)
+        ground_truth_masks = batch["labels"].to(device)
 
         optimizer.zero_grad()
 
@@ -24,14 +24,22 @@ def train_one_epoch(model, dataloader, optimizer, loss_fn, device, scaler=None):
                 predicted_masks = model(
                     pixel_values=pixel_values, input_boxes=input_boxes
                 )
-                loss = loss_fn(predicted_masks, ground_truth_masks)
+                loss = loss_fn(
+                    predicted_masks.unsqueeze(1),
+                    ground_truth_masks.unsqueeze(1).float(),
+                )
             scaler.scale(loss).backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(optimizer)
             scaler.update()
         else:
             predicted_masks = model(pixel_values=pixel_values, input_boxes=input_boxes)
-            loss = loss_fn(predicted_masks, ground_truth_masks)
+            loss = loss_fn(
+                predicted_masks.unsqueeze(1),
+                ground_truth_masks.unsqueeze(1).float(),
+            )
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
 
         total_loss += loss.item()
@@ -54,19 +62,25 @@ def evaluate(model, dataloader, loss_fn, device, use_amp=False):
         for batch in progress_bar:
             pixel_values = batch["pixel_values"].to(device)
             input_boxes = batch["input_boxes"].to(device)
-            ground_truth_masks = batch["ground_truth_masks"].to(device)
+            ground_truth_masks = batch["labels"].to(device)
 
             if use_amp:
                 with torch.amp.autocast(device_type=device.type):
                     predicted_masks = model(
                         pixel_values=pixel_values, input_boxes=input_boxes
                     )
-                    loss = loss_fn(predicted_masks, ground_truth_masks)
+                    loss = loss_fn(
+                        predicted_masks.unsqueeze(1),
+                        ground_truth_masks.unsqueeze(1).float(),
+                    )
             else:
                 predicted_masks = model(
                     pixel_values=pixel_values, input_boxes=input_boxes
                 )
-                loss = loss_fn(predicted_masks, ground_truth_masks)
+                loss = loss_fn(
+                    predicted_masks.unsqueeze(1),
+                    ground_truth_masks.unsqueeze(1).float(),
+                )
 
             # update running loss
             total_loss += loss.item()
