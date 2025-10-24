@@ -69,8 +69,8 @@ class BrainTumorDataset(Dataset):
 
         image = Image.open(image_path).convert("RGB")
 
-        mask = Image.open(mask_path).convert("L")
-        mask = np.array(mask).astype(np.uint8)
+        mask = np.array(Image.open(mask_path).convert("L"))
+        mask = (mask > 0).astype(np.float32)
 
         gt_bbox = self.metadata[image_filename]
 
