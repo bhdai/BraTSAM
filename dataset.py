@@ -11,17 +11,14 @@ from transformers import SamProcessor
 
 class BrainTumorDataset(Dataset):
     def __init__(
-        self, image_dir, mask_dir, metadata_path, processor, perturbation_level=10
+        self, image_dir, mask_dir, metadata, filenames, processor, perturbation_level=10
     ):
         self.image_dir = image_dir
         self.mask_dir = mask_dir
         self.processor = processor
         self.perturbation_level = perturbation_level
-
-        with open(metadata_path, "r") as f:
-            self.metadata = json.load(f)
-
-        self.image_filenames = list(self.metadata.keys())
+        self.image_filenames = filenames
+        self.metadata = metadata
 
     def __len__(self):
         return len(self.image_filenames)
