@@ -27,12 +27,12 @@ def main(args):
 
     # gradscaler for mixed precision training
     scaler = None
-    use_amp = args.use_amp and device == "cuda"
+    use_amp = args.use_amp and device.type == "cuda"
     if use_amp:
         scaler = torch.amp.GradScaler(device=device.type)
         print("Mixed precision training ENABLED")
     else:
-        if args.use_amp and device != "cuda":
+        if args.use_amp and device.type != "cuda":
             print(
                 "Warning: mixed precision requested but CUDA not available. Using FP32"
             )
@@ -43,9 +43,11 @@ def main(args):
         metadata = json.load(f)
 
     all_image_files = list(metadata.keys())
-    train_files, val_files = train_test_split(
+
+    train_files, temp_files = train_test_split(
         all_image_files, test_size=0.2, random_state=42
     )
+    val_files, test_files = train_test_split(temp_files, test_size=0.5, random_state=42)
 
     train_dataset = BrainTumorDataset(
         image_dir=args.image_dir,
