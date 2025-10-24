@@ -30,13 +30,13 @@ class SamFineTuner(nn.Module):
             input_boxes (torch.Tensor): the bounding box prompt tensor
 
         Returns:
-            torch.Tensor: The predicted masks.
+            torch.Tensor: The predicted masks
         """
         outputs = self.model(
             pixel_values=pixel_values, input_boxes=input_boxes
-        )  # (B, N, H, W) where N is the number of boxes
+        )  # [B, N, M, H, W] where N is number of input prompts, M is number of mask proposals (3 by default)
 
-        # squeeze here as we only provide a single bounding box so N is always 1
-        predicted_masks = outputs.pred_masks.squeeze(1)
+        # select the first mask and add channel dimension
+        predicted_masks = outputs.pred_masks[:, 0, 0, :, :]
 
         return predicted_masks
