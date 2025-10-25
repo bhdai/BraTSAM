@@ -40,15 +40,17 @@ class BrainTumorDataset(Dataset):
         img_width, img_height = image_size
         x_min, y_min, x_max, y_max = gt_bbox
 
+        noise_strength = random.randint(0, self.perturbation_level)
+
         # generate random noise for each coordinate to expand the box
-        x_min_noise = random.randint(0, self.perturbation_level)
-        y_min_noise = random.randint(0, self.perturbation_level)
-        x_max_noise = random.randint(0, self.perturbation_level)
-        y_max_noise = random.randint(0, self.perturbation_level)
+        x_min_noise = random.randint(-noise_strength, noise_strength)
+        y_min_noise = random.randint(-noise_strength, noise_strength)
+        x_max_noise = random.randint(-noise_strength, noise_strength)
+        y_max_noise = random.randint(-noise_strength, noise_strength)
 
         # apply noise to expand the box
-        noised_x_min = x_min - x_min_noise
-        noised_y_min = y_min - y_min_noise
+        noised_x_min = x_min + x_min_noise
+        noised_y_min = y_min + y_min_noise
         noised_x_max = x_max + x_max_noise
         noised_y_max = y_max + y_max_noise
 
@@ -57,6 +59,12 @@ class BrainTumorDataset(Dataset):
         final_y_min = max(0, noised_y_min)
         final_x_max = min(img_width - 1, noised_x_max)
         final_y_max = min(img_height - 1, noised_y_max)
+
+        # ensure min < max
+        if final_x_min >= final_x_max:
+            final_x_max = final_x_min + 1
+        if final_y_min >= final_y_max:
+            final_y_max = final_y_min + 1
 
         return [final_x_min, final_y_min, final_x_max, final_y_max]
 
