@@ -7,12 +7,14 @@ requires-python = ">=3.13"
 dependencies = [
     "monai>=1.5.1",
     "nibabel>=5.3.2",
+    "nnunetv2>=2.6.2",
     "numpy>=2.3.3",
     "scikit-learn>=1.7.2",
     "synapseclient>=4.9.0",
     "torch>=2.8.0",
     "torchvision>=0.23.0",
     "transformers>=4.57.1",
+    "wandb>=0.22.3",
 ]
 
 
