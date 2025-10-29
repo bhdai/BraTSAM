@@ -5,7 +5,6 @@ from torch.utils.data import DataLoader
 from transformers import SamProcessor
 from monai.metrics.meandice import DiceMetric
 from monai.metrics.meaniou import MeanIoU
-from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
 from model import SamFineTuner
@@ -46,13 +45,10 @@ def main(args):
         test_dataset, batch_size=args.batch_size, shuffle=False
     )
 
-    dice_metric = DiceMetric(include_background=False, reduction="mean_batch")
-    iou_metric = MeanIoU(include_background=False, reduction="mean_batch")
+    dice_metric = DiceMetric(include_background=False, reduction="mean")
+    iou_metric = MeanIoU(include_background=False, reduction="mean")
 
     print("\n--- Starting Evaluation ---")
-
-    all_dice_scores = []
-    all_iou_scores = []
 
     with torch.no_grad():
         progress_bar = tqdm(test_dataloader, desc="Evaluating")
@@ -72,22 +68,12 @@ def main(args):
             ground_truth_masks = ground_truth_masks.unsqueeze(1)
 
             # Calculate metrics for this batch
-            dice_score = dice_metric(predicted_binary, ground_truth_masks)
-            iou_score = iou_metric(predicted_binary, ground_truth_masks)
-
-            # Store batch scores
-            all_dice_scores.append(dice_score.mean().item())
-            all_iou_scores.append(iou_score.mean().item())
-
-            # Update progress bar
-            progress_bar.set_postfix(
-                dice=f"{dice_score.mean().item():.4f}",
-                iou=f"{iou_score.mean().item():.4f}",
-            )
+            dice_metric(predicted_binary, ground_truth_masks)
+            iou_metric(predicted_binary, ground_truth_masks)
 
     # Calculate final averaged metrics
-    final_dice = sum(all_dice_scores) / len(all_dice_scores)
-    final_iou = sum(all_iou_scores) / len(all_iou_scores)
+    final_dice = dice_metric.aggregate().item()
+    final_iou = iou_metric.aggregate().item()
 
     print("\n--- Evaluation Complete ---")
     print(f"Final Test Dice Score: {final_dice:.4f}")
