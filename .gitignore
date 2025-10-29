@@ -4,3 +4,6 @@ wandb/
 
 Makefile.local
 
+models/
+
+outputs/
