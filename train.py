@@ -44,10 +44,9 @@ def main(args):
 
     all_image_files = list(metadata.keys())
 
-    train_files, temp_files = train_test_split(
-        all_image_files, test_size=0.2, random_state=42
+    train_files, val_files = train_test_split(
+        all_image_files, test_size=0.1, random_state=42
     )
-    val_files, test_files = train_test_split(temp_files, test_size=0.5, random_state=42)
 
     train_dataset = BrainTumorDataset(
         image_dir=args.image_dir,
@@ -96,17 +95,22 @@ def main(args):
         )
 
         # save the best model checkpoint
-        if val_loss < best_val_loss and args.save_checkpoints:
-            best_val_loss = val_loss
-            checkpoint_path = os.path.join(args.output_dir, "best_model.pth")
-            torch.save(model.state_dict(), checkpoint_path)
-            print(
-                f"New best model saved to {checkpoint_path} (Val Loss: {best_val_loss:.4f})"
-            )
+        if val_loss < best_val_loss:
+            if args.save_checkpoints:
+                best_val_loss = val_loss
+                checkpoint_path = os.path.join(args.output_dir, "best_model.pth")
+                torch.save(model.state_dict(), checkpoint_path)
+                print(
+                    f"New best model saved to {checkpoint_path} (Val Loss: {best_val_loss:.4f})"
+                )
+            else:
+                best_val_loss = val_loss
+                print(
+                    f"New best validation loss: {best_val_loss:.4f} (checkpoint saving disabled)"
+                )
         else:
-            best_val_loss = val_loss
             print(
-                f"New best validation loss: {best_val_loss:.4f} (checkpoint saving disabled)"
+                f"Best validation loss: {best_val_loss:.4f} (checkpoint saving disabled)"
             )
 
     print("\n--- Training Complete ---")
@@ -149,7 +153,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--metadata_path",
         type=str,
-        default="./data/metadata.json",
+        default="./data/metadata_train.json",
         help="Path to the metadata JSON file.",
     )
     parser.add_argument(

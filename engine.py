@@ -29,7 +29,7 @@ def train_one_epoch(model, dataloader, optimizer, loss_fn, device, scaler=None):
                     ground_truth_masks.unsqueeze(1).float(),
                 )
             scaler.scale(loss).backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(optimizer)
             scaler.update()
         else:
@@ -39,7 +39,7 @@ def train_one_epoch(model, dataloader, optimizer, loss_fn, device, scaler=None):
                 ground_truth_masks.unsqueeze(1).float(),
             )
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
 
         total_loss += loss.item()

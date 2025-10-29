@@ -26,22 +26,17 @@ def main(args):
     model.eval()
 
     # load metadata and create data splits
-    with open(args.metadata_path, "r") as f:
-        metadata = json.load(f)
+    with open(args.test_metadata_path, "r") as f:
+        test_metadata = json.load(f)
 
-    all_image_files = list(metadata.keys())
-
-    train_files, temp_files = train_test_split(
-        all_image_files, test_size=0.2, random_state=42
-    )
-    val_files, test_files = train_test_split(temp_files, test_size=0.5, random_state=42)
+    test_files = list(test_metadata.keys())
 
     print(f"Test set size: {len(test_files)} samples")
 
     test_dataset = BrainTumorDataset(
-        image_dir=args.image_dir,
-        mask_dir=args.mask_dir,
-        metadata=metadata,
+        image_dir=args.test_image_dir,
+        mask_dir=args.test_mask_dir,
+        metadata=test_metadata,
         filenames=test_files,
         processor=processor,
         perturbation_level=0,  # no bbox noise during testing
@@ -117,22 +112,22 @@ if __name__ == "__main__":
         help="The Hugging Face model ID for SAM.",
     )
     parser.add_argument(
-        "--image_dir",
+        "--test_image_dir",
         type=str,
-        default="./data/images",
+        default="./data/images_test",
         help="Directory with test images.",
     )
     parser.add_argument(
-        "--mask_dir",
+        "--test_mask_dir",
         type=str,
-        default="./data/masks",
+        default="./data/masks_test",
         help="Directory with test masks.",
     )
     parser.add_argument(
-        "--metadata_path",
+        "--test_metadata_path",
         type=str,
-        default="./data/metadata.json",
-        help="Path to the metadata JSON file.",
+        default="./data/metadata_test.json",
+        help="Path to the test metadata JSON file.",
     )
     parser.add_argument(
         "--batch_size", type=int, default=4, help="Batch size for evaluation."
