@@ -70,9 +70,17 @@ def main(args):
     )
 
     train_dataloader = DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=True
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
     )
-    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        shuffle=False,
+    )
 
     if args.save_checkpoints:
         print("Checkpoint saving is ENABLED.")
@@ -184,6 +192,12 @@ if __name__ == "__main__":
         "--use_amp",
         action="store_true",
         help="Enable automatic mixed precision training (FP16/Bf16)",
+    )
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=4,
+        help="Number of worker threads for data loading.",
     )
     args = parser.parse_args()
     main(args)
