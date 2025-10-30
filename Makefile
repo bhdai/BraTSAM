@@ -2,7 +2,7 @@
 HOST ?= dummyhost
 REMOTE_DIR ?= /dummy/path
 
-RSYNC_OPTS = -axz --exclude-from=.rsyncignore
+RSYNC_OPTS = -axzP --exclude-from=.rsyncignore
 
 -include Makefile.local
 
