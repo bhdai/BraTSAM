@@ -17,10 +17,17 @@ def main(args):
 
     processor = SamProcessor.from_pretrained(args.model_id)
 
-    model = SamFineTuner(model_id=args.model_id)
+    model = SamFineTuner(
+        model_id=args.model_id,
+        use_lora=args.use_lora,
+        lora_rank=args.lora_rank,
+        lora_alpha=args.lora_alpha,
+    )
 
     print(f"Loading model weights from: {args.checkpoint_path}")
-    model.load_state_dict(torch.load(args.checkpoint_path, map_location=device))
+    model.load_state_dict(
+        torch.load(args.checkpoint_path, map_location=device), strict=False
+    )
     model.to(device)
     model.eval()
 
@@ -117,6 +124,20 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--batch_size", type=int, default=4, help="Batch size for evaluation."
+    )
+    parser.add_argument(
+        "--use_lora",
+        action="store_true",
+        help="Enable LoRA for loading a parameter-efficient fine-tuned model.",
+    )
+    parser.add_argument(
+        "--lora_rank", type=int, default=8, help="The rank 'r' for LoRA matrices."
+    )
+    parser.add_argument(
+        "--lora_alpha",
+        type=int,
+        default=16,
+        help="The alpha scaling parameter for LoRA.",
     )
     args = parser.parse_args()
     main(args)
