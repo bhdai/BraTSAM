@@ -1,20 +1,53 @@
 import torch.nn as nn
 from transformers import SamModel
+from peft import get_peft_model, LoraConfig, TaskType
 
 
 class SamFineTuner(nn.Module):
-    def __init__(self, model_id="facebook/sam-vit-base", freeze_encoders=True):
+    def __init__(
+        self,
+        model_id="facebook/sam-vit-base",
+        use_lora=False,
+        lora_rank=8,
+        lora_alpha=16,
+        freeze_encoders=True,
+    ):
         """
         A pytorch module wrapper for the SAM model to handle fine-tuning
 
         Args:
-            freeze_encoders (bool): if true, freezes the vision and prompt encoders
+            model_id (str): the model id of the SAM model
+            use_lora (bool): if true, applies LoRA to the model
+            lora_rank (int): the rank for the LoRA matricies
+            lora_alpha (int): the alpha scaling factor for LoRA
         """
         super().__init__()
         self.model = SamModel.from_pretrained(model_id)
 
-        # freeze the vision and prompt encoders
-        if freeze_encoders:
+        if use_lora:
+            print("Applying LoRA to SAM model...")
+
+            # LoRa is most effective on the q and v projections in the attention layers
+            lora_config = LoraConfig(
+                r=lora_rank,
+                lora_alpha=lora_alpha,
+                target_modules=["q_proj", "v_proj"],
+                lora_dropout=0.1,
+                bias="none",
+            )
+
+            # wrap the model with peft
+            self.model = get_peft_model(self.model, lora_config)
+
+            # unfreeze the mask decoder manually, as it's not part the peft wrapping target_modules
+            for name, param in self.model.named_parameters():
+                if name.startswith("mask_decoder"):
+                    param.requires_grad = True
+
+            print("LoRA applied. Trainable parameters:")
+            self.model.print_trainable_parameters()
+        else:
+            print("Using vanilla fine-tuning (unfreezing specific layers).")
             for name, param in self.model.named_parameters():
                 if name.startswith("vision_encoder") or name.startswith(
                     "prompt_encoder"

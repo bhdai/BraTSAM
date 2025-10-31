@@ -17,7 +17,12 @@ def main(args):
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
     processor = SamProcessor.from_pretrained(args.model_id)
-    model = SamFineTuner(model_id=args.model_id)
+    model = SamFineTuner(
+        model_id=args.model_id,
+        use_lora=args.use_lora,
+        lora_rank=args.lora_rank,
+        lora_alpha=args.lora_alpha,
+    )
     model.to(device)
 
     optimizer = AdamW(
@@ -198,6 +203,20 @@ if __name__ == "__main__":
         type=int,
         default=4,
         help="Number of worker threads for data loading.",
+    )
+    parser.add_argument(
+        "--use_lora",
+        action="store_true",
+        help="Enable LoRA for parameter-efficient fine-tuning.",
+    )
+    parser.add_argument(
+        "--lora_rank", type=int, default=8, help="The rank 'r' for LoRA matrices."
+    )
+    parser.add_argument(
+        "--lora_alpha",
+        type=int,
+        default=16,
+        help="The alpha scaling parameter for LoRA.",
     )
     args = parser.parse_args()
     main(args)
