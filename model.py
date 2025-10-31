@@ -40,7 +40,7 @@ class SamFineTuner(nn.Module):
 
             # unfreeze the mask decoder manually, as it's not part the peft wrapping target_modules
             for name, param in self.model.named_parameters():
-                if name.startswith("mask_decoder"):
+                if "mask_decoder" in name and "lora" not in name.lower():
                     param.requires_grad = True
 
             print("LoRA applied. Trainable parameters:")
