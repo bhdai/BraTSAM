@@ -10,7 +10,6 @@ class SamFineTuner(nn.Module):
         use_lora=False,
         lora_rank=8,
         lora_alpha=16,
-        freeze_encoders=True,
     ):
         """
         A pytorch module wrapper for the SAM model to handle fine-tuning

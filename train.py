@@ -10,7 +10,7 @@ from sklearn.model_selection import train_test_split
 
 from model import SamFineTuner
 from dataset import BrainTumorDataset
-from engine import train_one_epoch, evaluate
+from engine import train_one_epoch, evaluate, EarlyStopping
 
 
 def main(args):
@@ -53,6 +53,12 @@ def main(args):
         all_image_files, test_size=0.1, random_state=42
     )
 
+    checkpoint_path = os.path.join(args.output_dir, "best_model.pth")
+
+    early_stopper = EarlyStopping(
+        patience=args.early_stopping_patience, verbose=True, path=checkpoint_path
+    )
+
     train_dataset = BrainTumorDataset(
         image_dir=args.image_dir,
         mask_dir=args.mask_dir,
@@ -87,14 +93,6 @@ def main(args):
         shuffle=False,
     )
 
-    if args.save_checkpoints:
-        print("Checkpoint saving is ENABLED.")
-        os.makedirs(args.output_dir, exist_ok=True)
-    else:
-        print("Checkpoint saving is DISABLED.")
-
-    best_val_loss = float("inf")
-
     for epoch in range(args.num_epochs):
         print(f"\n--- Epoch {epoch + 1}/{args.num_epochs} ---")
 
@@ -107,27 +105,15 @@ def main(args):
             f"Epoch {epoch + 1} Summary | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}"
         )
 
-        # save the best model checkpoint
-        if val_loss < best_val_loss:
-            if args.save_checkpoints:
-                best_val_loss = val_loss
-                checkpoint_path = os.path.join(args.output_dir, "best_model.pth")
-                torch.save(model.state_dict(), checkpoint_path)
-                print(
-                    f"New best model saved to {checkpoint_path} (Val Loss: {best_val_loss:.4f})"
-                )
-            else:
-                best_val_loss = val_loss
-                print(
-                    f"New best validation loss: {best_val_loss:.4f} (checkpoint saving disabled)"
-                )
-        else:
-            print(
-                f"Best validation loss: {best_val_loss:.4f} (checkpoint saving disabled)"
-            )
+        early_stopper(val_loss, model)
+
+        if early_stopper.early_stop:
+            print("Early stoppping triggered")
+            break
 
     print("\n--- Training Complete ---")
-    print(f"Best validation loss achieved: {best_val_loss:.4f}")
+    print(f"Best validation loss achieved: {early_stopper.val_loss_min:.4f}")
+    print(f"Best model saved to: {checkpoint_path}")
 
 
 if __name__ == "__main__":
@@ -139,11 +125,6 @@ if __name__ == "__main__":
         type=str,
         default="./models",
         help="Directory to save model checkpoints.",
-    )
-    parser.add_argument(
-        "--save_checkpoints",
-        action="store_true",
-        help="Enable saving of the best model checkpoint.",
     )
     parser.add_argument(
         "--model_id",
@@ -168,9 +149,6 @@ if __name__ == "__main__":
         type=str,
         default="./data/metadata_train.json",
         help="Path to the metadata JSON file.",
-    )
-    parser.add_argument(
-        "--num_epochs", type=int, default=5, help="Number of epochs to train for."
     )
     parser.add_argument(
         "--batch_size", type=int, default=4, help="Batch size for training."
@@ -217,6 +195,18 @@ if __name__ == "__main__":
         type=int,
         default=16,
         help="The alpha scaling parameter for LoRA.",
+    )
+    parser.add_argument(
+        "--num_epochs",
+        type=int,
+        default=200,
+        help="Maximum number of epochs to train for.",
+    )
+    parser.add_argument(
+        "--early_stopping_patience",
+        type=int,
+        default=20,
+        help="Patience for early stopping. Training stops if val loss doesn't improve for this many epochs.",
     )
     args = parser.parse_args()
     main(args)
