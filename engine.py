@@ -11,6 +11,7 @@ class EarlyStopping:
         verbose=False,
         delta=0,
         path="best_model.pth",
+        latest_path="latest_model.pth",
         trace_func=print,
     ):
         """
@@ -18,7 +19,8 @@ class EarlyStopping:
             patience (int): How long to wait after last time validation loss improved
             verbose (bool): if true, prints the message for each validation loss improvement
             delta (float): minimum change int he monitored quanlity to quantify as an improvment
-            path (str): path to the checkpoint to be saved to
+            path (str): path to the best checkpoint to be saved to
+            latest_path (str): path to the latest checkpoint to be saved to
             trace_func (function): trace print function
         """
         self.patience = patience
@@ -29,10 +31,14 @@ class EarlyStopping:
         self.val_loss_min = float("inf")
         self.delta = delta
         self.path = path
+        self.latest_path = latest_path
         self.trace_func = trace_func
 
     def __call__(self, val_loss, model):
         score = -val_loss
+
+        # Always save the latest model
+        self.save_latest(model)
 
         if self.best_score is None:
             self.best_score = score
@@ -57,6 +63,10 @@ class EarlyStopping:
             )
         torch.save(model.state_dict(), self.path)
         self.val_loss_min = val_loss
+
+    def save_latest(self, model):
+        """saves the latest model checkpoint"""
+        torch.save(model.state_dict(), self.latest_path)
 
 
 def train_one_epoch(model, dataloader, optimizer, loss_fn, device, scaler=None):
