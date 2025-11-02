@@ -26,22 +26,23 @@ class SamFineTuner(nn.Module):
         if use_lora:
             print("Applying LoRA to SAM model...")
 
-            # LoRa is most effective on the q and v projections in the attention layers
+            # LoRA is most effective on the q and v projections in the attention layers
+            # fmt: off
             lora_config = LoraConfig(
                 r=lora_rank,
                 lora_alpha=lora_alpha,
-                target_modules=["q_proj", "v_proj"],
+                target_modules=[
+                    "qkv", "proj", # for Vision Encoder
+                    "q_proj", "k_proj", "v_proj", "out_proj", # for Mask Decoder Attention
+                    "lin1", "lin2" # for MLP blocks in both
+                ],
                 lora_dropout=0.1,
                 bias="none",
             )
+            # fmt: on
 
             # wrap the model with peft
             self.model = get_peft_model(self.model, lora_config)
-
-            # unfreeze the mask decoder manually, as it's not part the peft wrapping target_modules
-            for name, param in self.model.named_parameters():
-                if "mask_decoder" in name and "lora" not in name.lower():
-                    param.requires_grad = True
 
             print("LoRA applied. Trainable parameters:")
             self.model.print_trainable_parameters()
