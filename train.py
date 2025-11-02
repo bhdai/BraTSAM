@@ -6,6 +6,7 @@ from monai.losses.dice import DiceCELoss
 import os
 import argparse
 import json
+import time
 from sklearn.model_selection import train_test_split
 
 from model import SamFineTuner
@@ -53,10 +54,15 @@ def main(args):
         all_image_files, test_size=0.1, random_state=42
     )
 
+    os.makedirs(args.output_dir, exist_ok=True)
     checkpoint_path = os.path.join(args.output_dir, "best_model.pth")
+    latest_checkpoint_path = os.path.join(args.output_dir, "latest_model.pth")
 
     early_stopper = EarlyStopping(
-        patience=args.early_stopping_patience, verbose=True, path=checkpoint_path
+        patience=args.early_stopping_patience,
+        verbose=True,
+        path=checkpoint_path,
+        latest_path=latest_checkpoint_path,
     )
 
     train_dataset = BrainTumorDataset(
@@ -96,13 +102,15 @@ def main(args):
     for epoch in range(args.num_epochs):
         print(f"\n--- Epoch {epoch + 1}/{args.num_epochs} ---")
 
+        epoch_start_time = time.time()
         train_loss = train_one_epoch(
             model, train_dataloader, optimizer, loss_fn, device, scaler=scaler
         )
         val_loss = evaluate(model, val_dataloader, loss_fn, device, use_amp=use_amp)
+        epoch_time = time.time() - epoch_start_time
 
         print(
-            f"Epoch {epoch + 1} Summary | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}"
+            f"Epoch {epoch + 1} Summary | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Time: {epoch_time:.2f}s"
         )
 
         early_stopper(val_loss, model)
