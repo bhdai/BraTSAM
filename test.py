@@ -45,7 +45,7 @@ def main(args):
         metadata=test_metadata,
         filenames=test_files,
         processor=processor,
-        perturbation_level=0,  # no bbox noise during testing
+        perturbation_level=args.perturbation_level,
     )
 
     test_dataloader = DataLoader(
@@ -138,6 +138,12 @@ if __name__ == "__main__":
         type=int,
         default=16,
         help="The alpha scaling parameter for LoRA.",
+    )
+    parser.add_argument(
+        "--perturbation_level",
+        type=int,
+        default=0,
+        help="Max pixel perturbation for bbox augmentation during testing. Set to 0 for no perturbation.",
     )
     args = parser.parse_args()
     main(args)
