@@ -44,8 +44,9 @@ def main(args):
         mask_dir=args.test_mask_dir,
         metadata=test_metadata,
         filenames=test_files,
+        no_prompt_mode=args.no_prompt_mode,
         processor=processor,
-        perturbation_level=args.perturbation_level,
+        perturbation_level=args.perturbation_level,  # perturbation is ignored in no-prompt mode
     )
 
     test_dataloader = DataLoader(
@@ -144,6 +145,11 @@ if __name__ == "__main__":
         type=int,
         default=0,
         help="Max pixel perturbation for bbox augmentation during testing. Set to 0 for no perturbation.",
+    )
+    parser.add_argument(
+        "--no_prompt_mode",
+        action="store_true",
+        help="Enable fully automatic (prompt-less) training and evaluation.",
     )
     args = parser.parse_args()
     main(args)

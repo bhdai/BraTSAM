@@ -11,7 +11,14 @@ from transformers import SamProcessor
 
 class BrainTumorDataset(Dataset):
     def __init__(
-        self, image_dir, mask_dir, metadata, filenames, processor, perturbation_level=10
+        self,
+        image_dir,
+        mask_dir,
+        metadata,
+        filenames,
+        processor,
+        perturbation_level=10,
+        no_prompt_mode=False,
     ):
         self.image_dir = image_dir
         self.mask_dir = mask_dir
@@ -19,6 +26,7 @@ class BrainTumorDataset(Dataset):
         self.perturbation_level = perturbation_level
         self.image_filenames = filenames
         self.metadata = metadata
+        self.no_prompt_mode = no_prompt_mode
 
     def __len__(self):
         return len(self.image_filenames)
@@ -80,16 +88,26 @@ class BrainTumorDataset(Dataset):
         mask = np.array(Image.open(mask_path).convert("L"))
         mask = (mask > 0).astype(np.float32)
 
-        gt_bbox = self.metadata[image_filename]
+        if self.no_prompt_mode:
+            # Use full image as bbox prompt for prompt-free inference
+            img_width, img_height = image.size
+            full_image_bbox = [0, 0, img_width, img_height]
+            inputs = self.processor(
+                image,
+                input_boxes=[[full_image_bbox]],
+                segmentation_maps=mask,
+                return_tensors="pt",
+            )
+        else:
+            gt_bbox = self.metadata[image_filename]
+            prompt_bbox = self._get_prompt_bbox(gt_bbox, image.size)
 
-        prompt_bbox = self._get_prompt_bbox(gt_bbox, image.size)
-
-        inputs = self.processor(
-            image,
-            input_boxes=[[prompt_bbox]],
-            segmentation_maps=mask,
-            return_tensors="pt",
-        )
+            inputs = self.processor(
+                image,
+                input_boxes=[[prompt_bbox]],
+                segmentation_maps=mask,
+                return_tensors="pt",
+            )
 
         inputs = {k: v.squeeze(0) for k, v in inputs.items()}
 

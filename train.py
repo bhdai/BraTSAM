@@ -71,13 +71,15 @@ def main(args):
         metadata=metadata,
         filenames=train_files,
         processor=processor,
-        perturbation_level=args.perturbation_level,
+        no_prompt_mode=args.no_prompt_mode,
+        perturbation_level=args.perturbation_level,  # perturbation is ignored in no-prompt mode
     )
     val_dataset = BrainTumorDataset(
         image_dir=args.image_dir,
         mask_dir=args.mask_dir,
         metadata=metadata,
         filenames=val_files,
+        no_prompt_mode=args.no_prompt_mode,
         processor=processor,
         perturbation_level=0,
     )
@@ -170,7 +172,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--weight_decay",
         type=float,
-        default=1e-5,
+        default=5e-2,
         help="Weight decay for the optimizer.",
     )
     parser.add_argument(
@@ -215,6 +217,11 @@ if __name__ == "__main__":
         type=int,
         default=20,
         help="Patience for early stopping. Training stops if val loss doesn't improve for this many epochs.",
+    )
+    parser.add_argument(
+        "--no_prompt_mode",
+        action="store_true",
+        help="Enable fully automatic (prompt-less) training and evaluation.",
     )
     args = parser.parse_args()
     main(args)
