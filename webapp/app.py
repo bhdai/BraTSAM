@@ -6,9 +6,13 @@ providing a Streamlit-based interface for brain tumor segmentation workflows.
 
 import logging
 
+import numpy as np
 import streamlit as st
 
-from webapp.components.upload import render_upload_component
+from preprocessing.normalize import normalize_slice
+from preprocessing.volume import extract_slice
+from webapp.components.slice_selector import render_slice_selector
+from webapp.components.upload import UploadedImage, UploadedVolume, render_upload_component
 
 # Configure logging (backend)
 logging.basicConfig(
@@ -57,13 +61,47 @@ def main() -> None:
     uploaded = render_upload_component()
     
     if uploaded:
-        st.success("✅ Ready to process")
-        st.image(uploaded.data, caption=uploaded.filename, use_container_width=True)
-        
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Filename", uploaded.filename)
-        col2.metric("Size", f"{uploaded.file_size_mb:.2f} MB")
-        col3.metric("Dimensions", f"{uploaded.dimensions[1]}x{uploaded.dimensions[0]}")
+        if isinstance(uploaded, UploadedVolume):
+            # 3D Volume handling (AC: #1, #2, #3, #4, #5)
+            st.info(
+                f"🔬 3D volume detected: "
+                f"{uploaded.dimensions[0]}×{uploaded.dimensions[1]}×{uploaded.dimensions[2]}"
+            )
+            
+            # Slice selector (AC: #3, #4)
+            slice_idx = render_slice_selector(uploaded.num_slices)
+            
+            # Extract and normalize slice (AC: #2, #4)
+            slice_2d = extract_slice(uploaded.volume_data, slice_idx)
+            normalized = normalize_slice(slice_2d)
+            
+            # Convert grayscale to RGB for display
+            display_img = np.stack([normalized, normalized, normalized], axis=-1)
+            
+            st.image(
+                display_img,
+                caption=f"{uploaded.filename} - Slice {slice_idx}",
+                use_container_width=True,
+            )
+            
+            # Metadata display (AC: #5)
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Filename", uploaded.filename)
+            col2.metric("Size", f"{uploaded.file_size_mb:.2f} MB")
+            col3.metric(
+                "Dimensions",
+                f"{uploaded.dimensions[0]}×{uploaded.dimensions[1]}×{uploaded.dimensions[2]}",
+            )
+            col4.metric("Current Slice", f"{slice_idx + 1}/{uploaded.num_slices}")
+        else:
+            # 2D Image handling (existing behavior) (AC: #6)
+            st.success("✅ Ready to process")
+            st.image(uploaded.data, caption=uploaded.filename, use_container_width=True)
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Filename", uploaded.filename)
+            col2.metric("Size", f"{uploaded.file_size_mb:.2f} MB")
+            col3.metric("Dimensions", f"{uploaded.dimensions[1]}x{uploaded.dimensions[0]}")
     
     logger.info("BraTSAM main page rendered")
 

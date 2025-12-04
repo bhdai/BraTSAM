@@ -95,7 +95,8 @@ class TestRenderUploadComponent:
         mock_st.file_uploader.assert_called_once()
         call_kwargs = mock_st.file_uploader.call_args
         assert "type" in call_kwargs.kwargs
-        assert set(call_kwargs.kwargs["type"]) == {"png", "jpg", "jpeg"}
+        # Now supports NIfTI volumes in addition to images
+        assert set(call_kwargs.kwargs["type"]) == {"png", "jpg", "jpeg", "nii", "nii.gz"}
 
     @patch("webapp.components.upload.st")
     def test_returns_none_when_no_file_uploaded(self, mock_st: MagicMock) -> None:
@@ -181,8 +182,9 @@ class TestRenderUploadComponent:
             
             render_upload_component()
         
-        assert "uploaded_image" in mock_st.session_state
-        assert isinstance(mock_st.session_state["uploaded_image"], UploadedImage)
+        # Updated: session state key is now 'uploaded_data' (supports both images and volumes)
+        assert "uploaded_data" in mock_st.session_state
+        assert isinstance(mock_st.session_state["uploaded_data"], UploadedImage)
 
     @patch("webapp.components.upload.Image")
     @patch("webapp.components.upload.st")
@@ -190,14 +192,14 @@ class TestRenderUploadComponent:
         self, mock_st: MagicMock, mock_image: MagicMock
     ) -> None:
         """Test that new upload replaces previous image in session state."""
-        # Set up existing image in session state
+        # Set up existing image in session state (using new key)
         old_image = UploadedImage(
             filename="old.png",
             data=np.zeros((50, 50, 3), dtype=np.uint8),
             file_size_bytes=512,
             file_id="old-file-id",
         )
-        mock_st.session_state = {"uploaded_image": old_image}
+        mock_st.session_state = {"uploaded_data": old_image}
         
         # Upload new file with different file_id
         mock_file = MagicMock()
@@ -216,9 +218,9 @@ class TestRenderUploadComponent:
             
             render_upload_component()
         
-        # Verify new image replaced old
-        assert mock_st.session_state["uploaded_image"].filename == "new.png"
-        assert mock_st.session_state["uploaded_image"].file_size_bytes == 2048
+        # Verify new image replaced old (using updated key)
+        assert mock_st.session_state["uploaded_data"].filename == "new.png"
+        assert mock_st.session_state["uploaded_data"].file_size_bytes == 2048
 
     @patch("webapp.components.upload.Image")
     @patch("webapp.components.upload.st")
@@ -251,14 +253,14 @@ class TestZombieStateClearing:
         self, mock_st: MagicMock, mock_image: MagicMock
     ) -> None:
         """Test that session state is cleared when file size validation fails."""
-        # Set up existing image in session state
+        # Set up existing image in session state (using new key)
         old_image = UploadedImage(
             filename="old.png",
             data=np.zeros((50, 50, 3), dtype=np.uint8),
             file_size_bytes=512,
             file_id="old-file-id",
         )
-        mock_st.session_state = {"uploaded_image": old_image}
+        mock_st.session_state = {"uploaded_data": old_image}
         
         # Upload file that's too large
         mock_file = MagicMock()
@@ -269,8 +271,8 @@ class TestZombieStateClearing:
         
         render_upload_component()
         
-        # Session state should be cleared (zombie state fix)
-        assert mock_st.session_state["uploaded_image"] is None
+        # Session state should be cleared (zombie state fix) - now using 'uploaded_data'
+        assert mock_st.session_state["uploaded_data"] is None
 
     @patch("webapp.components.upload.Image")
     @patch("webapp.components.upload.st")
@@ -278,14 +280,14 @@ class TestZombieStateClearing:
         self, mock_st: MagicMock, mock_image: MagicMock
     ) -> None:
         """Test that session state is cleared when image loading fails."""
-        # Set up existing image in session state
+        # Set up existing image in session state (using new key)
         old_image = UploadedImage(
             filename="old.png",
             data=np.zeros((50, 50, 3), dtype=np.uint8),
             file_size_bytes=512,
             file_id="old-file-id",
         )
-        mock_st.session_state = {"uploaded_image": old_image}
+        mock_st.session_state = {"uploaded_data": old_image}
         
         # Upload corrupted file
         mock_file = MagicMock()
@@ -298,8 +300,8 @@ class TestZombieStateClearing:
         
         render_upload_component()
         
-        # Session state should be cleared (zombie state fix)
-        assert mock_st.session_state["uploaded_image"] is None
+        # Session state should be cleared (zombie state fix) - now using 'uploaded_data'
+        assert mock_st.session_state["uploaded_data"] is None
 
     @patch("webapp.components.upload.Image")
     @patch("webapp.components.upload.st")
@@ -307,14 +309,14 @@ class TestZombieStateClearing:
         self, mock_st: MagicMock, mock_image: MagicMock
     ) -> None:
         """Test that session state is cleared when UnidentifiedImageError occurs."""
-        # Set up existing image in session state
+        # Set up existing image in session state (using new key)
         old_image = UploadedImage(
             filename="old.png",
             data=np.zeros((50, 50, 3), dtype=np.uint8),
             file_size_bytes=512,
             file_id="old-file-id",
         )
-        mock_st.session_state = {"uploaded_image": old_image}
+        mock_st.session_state = {"uploaded_data": old_image}
         
         # Upload invalid file
         mock_file = MagicMock()
@@ -327,8 +329,8 @@ class TestZombieStateClearing:
         
         result = render_upload_component()
         
-        # Session state should be cleared (zombie state fix)
-        assert mock_st.session_state["uploaded_image"] is None
+        # Session state should be cleared (zombie state fix) - now using 'uploaded_data'
+        assert mock_st.session_state["uploaded_data"] is None
         # User-friendly error message should be shown
         mock_st.error.assert_called()
         error_message = mock_st.error.call_args[0][0]
@@ -341,14 +343,14 @@ class TestZombieStateClearing:
         self, mock_st: MagicMock, mock_clear_upload: MagicMock
     ) -> None:
         """Test that session state is cleared when user removes file."""
-        # Set up existing image in session state
+        # Set up existing image in session state (using new key)
         old_image = UploadedImage(
             filename="old.png",
             data=np.zeros((50, 50, 3), dtype=np.uint8),
             file_size_bytes=512,
             file_id="old-file-id",
         )
-        mock_st.session_state = {"uploaded_image": old_image}
+        mock_st.session_state = {"uploaded_data": old_image}
         mock_st.file_uploader.return_value = None
         
         render_upload_component()
@@ -366,14 +368,14 @@ class TestFileCaching:
         self, mock_st: MagicMock, mock_image: MagicMock
     ) -> None:
         """Test that cached image is returned when file_id matches."""
-        # Set up existing image in session state with specific file_id
+        # Set up existing image in session state with specific file_id (using new key)
         existing_image = UploadedImage(
             filename="cached.png",
             data=np.zeros((100, 100, 3), dtype=np.uint8),
             file_size_bytes=1024,
             file_id="same-file-id",
         )
-        mock_st.session_state = {"uploaded_image": existing_image}
+        mock_st.session_state = {"uploaded_data": existing_image}
         
         # Upload file with same file_id
         mock_file = MagicMock()
@@ -401,7 +403,7 @@ class TestFileCaching:
             file_size_bytes=512,
             file_id="old-file-id",
         )
-        mock_st.session_state = {"uploaded_image": existing_image}
+        mock_st.session_state = {"uploaded_data": existing_image}
         
         # Upload file with different file_id
         mock_file = MagicMock()
@@ -435,7 +437,7 @@ class TestClearUpload:
     ) -> None:
         """Test that clear_upload sets session state to None."""
         mock_st.session_state = {
-            "uploaded_image": UploadedImage(
+            "uploaded_data": UploadedImage(
                 filename="test.png",
                 data=np.zeros((10, 10, 3), dtype=np.uint8),
                 file_size_bytes=100,
@@ -444,7 +446,8 @@ class TestClearUpload:
         
         clear_upload()
         
-        assert mock_st.session_state["uploaded_image"] is None
+        # Updated: now clears 'uploaded_data' key
+        assert mock_st.session_state["uploaded_data"] is None
 
     @patch("webapp.components.upload.st")
     def test_clear_upload_handles_missing_key(self, mock_st: MagicMock) -> None:
