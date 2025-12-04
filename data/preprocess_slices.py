@@ -7,67 +7,8 @@ import nibabel as nib
 import numpy as np
 from PIL import Image
 
-
-def get_bounding_box(mask: np.ndarray) -> list[int] | None:
-    """
-    Calculates the tightest bounding box around the 1s in a binary mask
-
-    Args:
-        mask (np.ndarray): A 2D NumPy array representing a binary mask
-
-    Returns:
-        list | None: A list of 4 integers [x_min, y_min, x_max, y_max]
-                      or None if the mask is empty
-    """
-    rows, cols = np.where(mask > 0)
-    if rows.size == 0 or cols.size == 0:
-        return None
-
-    x_min = int(np.min(cols))
-    y_min = int(np.min(rows))
-    x_max = int(np.max(cols))
-    y_max = int(np.max(rows))
-
-    return [x_min, y_min, x_max, y_max]
-
-
-def find_best_slice(mask_volume, tumor_labels=[1, 2, 4]):
-    """
-    Find the slice index with the largest tumor area
-
-    Args:
-        mask_volume: 3D numpy array (H, W, Z)
-        tumor_labels: list of integer labels representing tumor regions
-
-    Returns:
-        best_slice_idx: index of the slice with maximum tumor area
-        max_area: the tumor area in that slice (in pixels)
-    """
-    areas = [
-        np.isin(mask_volume[:, :, z], tumor_labels).sum()
-        for z in range(mask_volume.shape[2])
-    ]
-
-    best_slice_idx = np.argmax(areas)
-    max_area = areas[best_slice_idx]
-    return best_slice_idx, max_area
-
-
-def normalize_slice(slice_2d):
-    """
-    Normalize 2D slice to 0-255 range
-
-    Args:
-        slice_2d: 2D numpy array
-
-    Returns:
-        normalized and scaled slice as uint8
-    """
-    if slice_2d.max() > slice_2d.min():
-        normalized = (slice_2d - slice_2d.min()) / (slice_2d.max() - slice_2d.min())
-    else:
-        normalized = np.zeros_like(slice_2d)  # handle constant slice
-    return (normalized * 255).astype(np.uint8)
+# Import shared preprocessing functions
+from preprocessing import get_bounding_box, find_best_slice, normalize_slice
 
 
 def process_directory(base_data_dir, output_suffix=""):
