@@ -10,12 +10,14 @@ ThreadPoolExecutor for background processing.
 
 import logging
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
+from PIL import Image as PILImage
 
 if TYPE_CHECKING:
     from peft import PeftModel
@@ -33,6 +35,12 @@ logger = logging.getLogger(__name__)
 # Confidence threshold constants
 CONFIDENCE_AUTO_APPROVED = 0.90
 CONFIDENCE_NEEDS_REVIEW = 0.50
+
+# YOLO detection threshold
+YOLO_MIN_CONFIDENCE = 0.25
+
+# Mask processing constants
+MASK_BINARY_THRESHOLD = 127
 
 
 @dataclass
@@ -166,22 +174,41 @@ def _detect_tumor(
     Returns:
         Tuple of (bounding_box, confidence) or (None, None) if no detection.
         Box format: [x_min, y_min, x_max, y_max] (pixel coordinates).
+
+    Note:
+        Detections below YOLO_MIN_CONFIDENCE (0.25) are filtered out.
+        If multiple detections remain, the highest confidence one is selected.
     """
+    start_time = time.perf_counter()
+
     results = yolo(image, verbose=False)
 
     if len(results[0].boxes) == 0:
-        logger.info("No tumor detected by YOLO")
+        elapsed = time.perf_counter() - start_time
+        logger.info(f"No tumor detected by YOLO, time={elapsed:.3f}s")
         return None, None
 
-    # Select highest confidence box
+    # Filter by minimum confidence threshold
     boxes = results[0].boxes
-    best_idx = boxes.conf.argmax()
-    best_box = boxes[best_idx]
+    mask = boxes.conf >= YOLO_MIN_CONFIDENCE
 
-    coords = best_box.xyxy[0].cpu().numpy().astype(int).tolist()
-    confidence = float(best_box.conf[0].cpu().numpy())
+    if not mask.any():
+        elapsed = time.perf_counter() - start_time
+        logger.info(
+            f"All detections below threshold ({YOLO_MIN_CONFIDENCE}), time={elapsed:.3f}s"
+        )
+        return None, None
 
-    logger.info(f"Tumor detected: box={coords}, conf={confidence:.3f}")
+    # Select highest confidence from filtered boxes
+    filtered_conf = boxes.conf[mask]
+    filtered_xyxy = boxes.xyxy[mask]
+    best_idx = filtered_conf.argmax()
+
+    coords = filtered_xyxy[best_idx].cpu().numpy().astype(int).tolist()
+    confidence = float(filtered_conf[best_idx].cpu().numpy())
+
+    elapsed = time.perf_counter() - start_time
+    logger.info(f"Tumor detected: box={coords}, conf={confidence:.3f}, time={elapsed:.3f}s")
     return coords, confidence
 
 
@@ -219,29 +246,33 @@ def _segment_tumor(
     with torch.no_grad():
         outputs = sam_model(**inputs)
 
-    # Extract mask
+    # Extract mask and IoU scores from SAM output
     masks = outputs.pred_masks.cpu().numpy()
     mask = masks[0, 0, 0]  # [B, N, M, H, W] → select first
+
+    # Extract SAM's predicted IoU score if available
+    if hasattr(outputs, "iou_scores") and outputs.iou_scores is not None:
+        sam_iou = float(outputs.iou_scores[0, 0].cpu().numpy())
+    else:
+        # Fallback: use mask confidence heuristic based on mask area ratio
+        mask_area_ratio = (mask > 0).sum() / mask.size
+        # Reasonable masks typically cover 1-30% of the image
+        sam_iou = min(0.95, max(0.5, 1.0 - abs(mask_area_ratio - 0.10) * 2))
+        logger.debug(f"No IoU score from SAM, estimated from mask area: {sam_iou:.3f}")
 
     # Resize mask to original image size if needed
     # SAM outputs 256x256 by default
     if mask.shape != image.shape[:2]:
-        from PIL import Image as PILImage
-
         mask_pil = PILImage.fromarray((mask > 0).astype(np.uint8) * 255)
         mask_pil = mask_pil.resize(
             (image.shape[1], image.shape[0]), PILImage.NEAREST
         )
-        mask = np.array(mask_pil) > 127
+        mask = np.array(mask_pil) > MASK_BINARY_THRESHOLD
 
     # Binary threshold
     binary_mask = (mask > 0).astype(np.uint8)
 
-    # Placeholder IoU score (no ground truth during inference)
-    # Could compute IoU against previous predictions or other heuristics
-    sam_iou = 0.85  # Placeholder - will be replaced with actual computation
-
-    logger.info(f"Segmentation complete: mask_pixels={binary_mask.sum()}")
+    logger.info(f"Segmentation complete: mask_pixels={binary_mask.sum()}, iou={sam_iou:.3f}")
     return binary_mask, sam_iou
 
 
@@ -300,7 +331,9 @@ def run_pipeline(
 __all__ = [
     "CONFIDENCE_AUTO_APPROVED",
     "CONFIDENCE_NEEDS_REVIEW",
+    "YOLO_MIN_CONFIDENCE",
     "PipelineResult",
+    "_detect_tumor",
     "load_models",
     "run_pipeline",
 ]

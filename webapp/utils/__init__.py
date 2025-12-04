@@ -3,6 +3,7 @@
 from webapp.utils.inference import (
     CONFIDENCE_AUTO_APPROVED,
     CONFIDENCE_NEEDS_REVIEW,
+    YOLO_MIN_CONFIDENCE,
     PipelineResult,
     load_models,
     run_pipeline,
@@ -11,6 +12,7 @@ from webapp.utils.inference import (
 __all__ = [
     "CONFIDENCE_AUTO_APPROVED",
     "CONFIDENCE_NEEDS_REVIEW",
+    "YOLO_MIN_CONFIDENCE",
     "PipelineResult",
     "load_models",
     "run_pipeline",

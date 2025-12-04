@@ -10,8 +10,8 @@ dependencies = [
     "nnunetv2>=2.6.2",
     "numpy>=2.3.3",
     "peft>=0.17.1",
+    "pillow>=11.0.0",
     "scikit-learn>=1.7.2",
-    "segment-anything>=1.0",
     "streamlit>=1.40.0",
     "streamlit-drawable-canvas>=0.9.3",
     "synapseclient>=4.9.0",
@@ -39,4 +39,10 @@ torchvision = [
 [dependency-groups]
 dev = [
     "pytest>=9.0.1",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests (require external resources)",
+    "slow: marks tests as slow (may take >1 second)",
 ]
