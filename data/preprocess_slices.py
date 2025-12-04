@@ -8,7 +8,7 @@ import numpy as np
 from PIL import Image
 
 
-def get_bounding_box(mask: np.ndarray) -> list | None:
+def get_bounding_box(mask: np.ndarray) -> list[int] | None:
     """
     Calculates the tightest bounding box around the 1s in a binary mask
 

@@ -12,6 +12,8 @@ dependencies = [
     "peft>=0.17.1",
     "scikit-learn>=1.7.2",
     "segment-anything>=1.0",
+    "streamlit>=1.40.0",
+    "streamlit-drawable-canvas>=0.9.3",
     "synapseclient>=4.9.0",
     "torch>=2.8.0",
     "torchvision>=0.23.0",
@@ -32,4 +34,9 @@ torch = [
 ]
 torchvision = [
   { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.1",
 ]
