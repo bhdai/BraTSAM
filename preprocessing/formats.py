@@ -20,8 +20,7 @@ def load_image(path: str | Path) -> np.ndarray:
         path: Path to the image file (string or pathlib.Path).
 
     Returns:
-        Image data as numpy array. Shape is (H, W) for grayscale
-        or (H, W, 3) for RGB images.
+        Image data as numpy array. Shape is always (H, W, 3) (RGB).
 
     Raises:
         FileNotFoundError: If the image file does not exist.
@@ -31,12 +30,12 @@ def load_image(path: str | Path) -> np.ndarray:
         >>> from pathlib import Path
         >>> img = load_image(Path("brain_slice.png"))
         >>> img.shape
-        (240, 240)
+        (240, 240, 3)
     """
     path = Path(path)
 
     if not path.exists():
         raise FileNotFoundError(f"Image file not found: {path}")
 
-    img = Image.open(path)
+    img = Image.open(path).convert("RGB")
     return np.array(img)

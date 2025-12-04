@@ -68,13 +68,13 @@ class TestLoadImage:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             # Create a simple test image
             img_array = np.array([[100, 150], [200, 50]], dtype=np.uint8)
-            img = Image.fromarray(img_array, mode="L")
+            img = Image.fromarray(img_array)
             img.save(f.name)
 
             # Load and verify
             result = load_image(f.name)
             assert isinstance(result, np.ndarray)
-            assert result.shape == (2, 2)  # grayscale
+            assert result.shape == (2, 2, 3)  # RGB, even if source was grayscale
 
             # Clean up
             Path(f.name).unlink()
@@ -84,7 +84,7 @@ class TestLoadImage:
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
             # Create a simple RGB test image
             img_array = np.random.randint(0, 255, (32, 32, 3), dtype=np.uint8)
-            img = Image.fromarray(img_array, mode="RGB")
+            img = Image.fromarray(img_array)
             img.save(f.name)
 
             # Load and verify
@@ -104,7 +104,7 @@ class TestLoadImage:
         """Should accept pathlib.Path objects."""
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             img_array = np.array([[100, 150], [200, 50]], dtype=np.uint8)
-            img = Image.fromarray(img_array, mode="L")
+            img = Image.fromarray(img_array)
             img.save(f.name)
 
             # Load using Path object

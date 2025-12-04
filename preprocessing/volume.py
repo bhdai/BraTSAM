@@ -9,7 +9,7 @@ import numpy as np
 
 def find_best_slice(
     mask_volume: np.ndarray,
-    tumor_labels: list[int] = [1, 2, 4],
+    tumor_labels: list[int] | None = None,
 ) -> tuple[int, int]:
     """Find the slice index with the largest tumor area.
 
@@ -20,12 +20,13 @@ def find_best_slice(
         mask_volume: 3D numpy array with shape (H, W, Z) containing
             segmentation labels.
         tumor_labels: List of integer labels representing tumor regions.
-            Defaults to [1, 2, 4] for BraTS dataset convention.
+            Defaults to [1, 2, 4] (BraTS convention) if None.
 
     Returns:
         Tuple of (best_slice_idx, max_area) where:
         - best_slice_idx: Index of the slice with maximum tumor area
         - max_area: The tumor area in that slice (in pixels)
+
 
     Example:
         >>> volume = np.zeros((240, 240, 155), dtype=np.int16)
@@ -33,6 +34,9 @@ def find_best_slice(
         >>> idx, area = find_best_slice(volume)
         >>> print(f"Best slice: {idx}, Area: {area} pixels")
     """
+    if tumor_labels is None:
+        tumor_labels = [1, 2, 4]
+
     areas = [
         np.isin(mask_volume[:, :, z], tumor_labels).sum()
         for z in range(mask_volume.shape[2])
