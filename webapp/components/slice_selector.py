@@ -7,24 +7,36 @@ of a 3D volumetric image (NIfTI) in the BraTSAM web application.
 import streamlit as st
 
 
-def render_slice_selector(num_slices: int) -> int:
+def render_slice_selector(num_slices: int, volume_file_id: str = "") -> int:
     """Render slice selector slider and return selected index.
     
     Displays a slider widget allowing users to navigate through slices
     of a 3D volume. Stores the selected index in session state for
-    persistence across reruns.
+    persistence across reruns. Resets to middle slice when a new volume
+    is loaded (detected by file_id change).
     
     Args:
         num_slices: Total number of slices in the volume.
+        volume_file_id: Unique identifier for the current volume (used to
+            detect when a new volume is loaded and reset slice index).
     
     Returns:
         Currently selected slice index (0-indexed).
     
     Example:
         >>> # In Streamlit app with 155-slice volume
-        >>> slice_idx = render_slice_selector(155)
+        >>> slice_idx = render_slice_selector(155, "file-id-123")
         >>> print(f"Selected slice: {slice_idx}")
     """
+    # Track which volume the slice index belongs to
+    if "slice_selector_volume_id" not in st.session_state:
+        st.session_state["slice_selector_volume_id"] = ""
+    
+    # Reset slice index when a new volume is loaded
+    if volume_file_id and st.session_state["slice_selector_volume_id"] != volume_file_id:
+        st.session_state["current_slice_idx"] = num_slices // 2
+        st.session_state["slice_selector_volume_id"] = volume_file_id
+    
     # Initialize session state if needed
     if "current_slice_idx" not in st.session_state:
         st.session_state["current_slice_idx"] = num_slices // 2

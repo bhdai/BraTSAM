@@ -70,13 +70,13 @@ class TestUploadedImageDataclass:
 class TestFileSizeConstants:
     """Tests for file size constants."""
 
-    def test_max_file_size_mb_is_10(self) -> None:
-        """Test that MAX_FILE_SIZE_MB is set to 10."""
-        assert MAX_FILE_SIZE_MB == 10
+    def test_max_file_size_mb_is_100(self) -> None:
+        """Test that MAX_FILE_SIZE_MB is set to 100 (for BraTS volumes)."""
+        assert MAX_FILE_SIZE_MB == 100
 
     def test_max_file_size_bytes_calculation(self) -> None:
         """Test that MAX_FILE_SIZE_BYTES is correctly calculated."""
-        assert MAX_FILE_SIZE_BYTES == 10 * 1024 * 1024
+        assert MAX_FILE_SIZE_BYTES == 100 * 1024 * 1024
 
 
 class TestRenderUploadComponent:
@@ -113,9 +113,9 @@ class TestRenderUploadComponent:
     def test_file_size_validation_rejects_large_files(
         self, mock_st: MagicMock, mock_image: MagicMock
     ) -> None:
-        """Test that files over 10MB are rejected with error message."""
+        """Test that files over 100MB are rejected with error message."""
         mock_file = MagicMock()
-        mock_file.size = 11 * 1024 * 1024  # 11MB - over limit
+        mock_file.size = 101 * 1024 * 1024  # 101MB - over limit
         mock_file.name = "large_file.png"
         mock_file.file_id = "test-file-id-large"
         mock_st.file_uploader.return_value = mock_file
@@ -264,7 +264,7 @@ class TestZombieStateClearing:
         
         # Upload file that's too large
         mock_file = MagicMock()
-        mock_file.size = 11 * 1024 * 1024  # 11MB - over limit
+        mock_file.size = 101 * 1024 * 1024  # 101MB - over limit
         mock_file.name = "large_file.png"
         mock_file.file_id = "large-file-id"
         mock_st.file_uploader.return_value = mock_file

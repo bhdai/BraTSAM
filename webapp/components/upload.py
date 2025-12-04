@@ -18,8 +18,8 @@ from PIL import Image, UnidentifiedImageError
 
 logger = logging.getLogger(__name__)
 
-# File size limits (NFR3)
-MAX_FILE_SIZE_MB = 10
+# File size limits (NFR3) - BraTS volumes typically 20-50MB
+MAX_FILE_SIZE_MB = 100
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
 
@@ -189,6 +189,7 @@ def _load_nifti_volume(
     Returns:
         UploadedVolume if successful, None on error.
     """
+    tmp_path: Path | None = None
     try:
         # Write to temp file for nibabel to read (nibabel needs file path)
         with tempfile.NamedTemporaryFile(
@@ -202,10 +203,8 @@ def _load_nifti_volume(
         nii = nib.load(tmp_path)
         # Convert to canonical orientation (RAS+) for consistency
         nii_canonical = nib.as_closest_canonical(nii)
-        volume_data = np.array(nii_canonical.get_fdata())
-        
-        # Clean up temp file
-        tmp_path.unlink()
+        # Cast to float32 to reduce memory usage (default is often float64)
+        volume_data = np.array(nii_canonical.get_fdata(), dtype=np.float32)
         
         # Create UploadedVolume dataclass
         uploaded_volume = UploadedVolume(
@@ -232,6 +231,10 @@ def _load_nifti_volume(
         logger.error(f"NIfTI load error: {e}")
         st.session_state["uploaded_data"] = None
         return None
+    finally:
+        # Always clean up temp file, even if an error occurred
+        if tmp_path is not None and tmp_path.exists():
+            tmp_path.unlink()
 
 
 def _load_2d_image(

@@ -68,8 +68,8 @@ def main() -> None:
                 f"{uploaded.dimensions[0]}×{uploaded.dimensions[1]}×{uploaded.dimensions[2]}"
             )
             
-            # Slice selector (AC: #3, #4)
-            slice_idx = render_slice_selector(uploaded.num_slices)
+            # Slice selector (AC: #3, #4) - pass file_id to reset on new volume
+            slice_idx = render_slice_selector(uploaded.num_slices, uploaded.file_id)
             
             # Extract and normalize slice (AC: #2, #4)
             slice_2d = extract_slice(uploaded.volume_data, slice_idx)
