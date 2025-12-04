@@ -10,7 +10,7 @@ from datetime import datetime
 
 import numpy as np
 import streamlit as st
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +28,13 @@ class UploadedImage:
         data: Image as numpy array with shape (H, W, 3) in RGB format.
         file_size_bytes: Size of the uploaded file in bytes.
         upload_time: Timestamp when the image was uploaded.
+        file_id: Unique identifier for the uploaded file (used for caching).
     """
     
     filename: str
     data: np.ndarray  # Image as numpy array (H, W, 3)
     file_size_bytes: int
+    file_id: str = ""  # Unique ID from Streamlit's file_uploader
     upload_time: datetime = field(default_factory=datetime.now)
     
     @property
@@ -63,6 +65,9 @@ def render_upload_component() -> UploadedImage | None:
     Validates file size (max 10MB) and image format. Stores valid
     uploads in st.session_state.uploaded_image.
     
+    Uses file_id caching to avoid redundant image processing on reruns.
+    Clears zombie state when validation fails.
+    
     Returns:
         UploadedImage if valid file uploaded, None otherwise.
     """
@@ -77,26 +82,52 @@ def render_upload_component() -> UploadedImage | None:
     )
     
     if uploaded_file is None:
+        # Clear zombie state when no file is present
+        if st.session_state["uploaded_image"] is not None:
+            clear_upload()
         return None
+    
+    # Check if we already processed this exact file (avoid redundant processing)
+    current_file_id = uploaded_file.file_id
+    existing_image = st.session_state["uploaded_image"]
+    if existing_image is not None and existing_image.file_id == current_file_id:
+        # Same file, return cached result
+        return existing_image
     
     # File size validation (AC: #4)
     if uploaded_file.size > MAX_FILE_SIZE_BYTES:
         st.error(
-            f"File too large ({uploaded_file.size / (1024 * 1024):.1f}MB). "
-            f"Maximum size is {MAX_FILE_SIZE_MB}MB."
+            f"⚠️ **File too large** — Your file is {uploaded_file.size / (1024 * 1024):.1f}MB. "
+            f"Please upload an image smaller than {MAX_FILE_SIZE_MB}MB."
         )
         logger.warning(
             f"Upload rejected: file too large ({uploaded_file.size} bytes)"
         )
+        # Clear zombie state on validation failure
+        st.session_state["uploaded_image"] = None
         return None
     
     # Load and convert image (AC: #1, #3)
     try:
         img = Image.open(uploaded_file).convert("RGB")
         img_array = np.array(img)
+    except UnidentifiedImageError:
+        st.error(
+            "⚠️ **Invalid image file** — The file could not be read as an image. "
+            "Please upload a valid PNG or JPG file."
+        )
+        logger.error(f"Image load error: unidentified image format for {uploaded_file.name}")
+        # Clear zombie state on validation failure
+        st.session_state["uploaded_image"] = None
+        return None
     except Exception as e:
-        st.error(f"Failed to load image: {e}")
+        st.error(
+            "⚠️ **Failed to load image** — An unexpected error occurred while reading the file. "
+            "Please try again with a different image."
+        )
         logger.error(f"Image load error: {e}")
+        # Clear zombie state on validation failure
+        st.session_state["uploaded_image"] = None
         return None
     
     # Create UploadedImage dataclass (AC: #2)
@@ -104,6 +135,7 @@ def render_upload_component() -> UploadedImage | None:
         filename=uploaded_file.name,
         data=img_array,
         file_size_bytes=uploaded_file.size,
+        file_id=current_file_id,
     )
     
     # Store in session state (AC: #2, #6 - replacement)
