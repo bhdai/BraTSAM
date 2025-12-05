@@ -148,3 +148,42 @@ def test_webapp_app_shows_threshold_explanation():
     assert "50" in app_content, (
         "webapp/app.py should mention 50% threshold for needs-review"
     )
+
+
+# Story 3.1 Tests: Interactive Image Viewer Component Integration
+
+
+def test_webapp_app_imports_render_image_viewer():
+    """Story 3.1 AC #5: webapp/app.py should import render_image_viewer."""
+    app_content = Path("webapp/app.py").read_text()
+
+    assert "from webapp.components.viewer import render_image_viewer" in app_content, (
+        "webapp/app.py should import render_image_viewer from viewer component"
+    )
+
+
+def test_webapp_app_uses_render_image_viewer():
+    """Story 3.1 AC #5: webapp/app.py should use render_image_viewer for display."""
+    app_content = Path("webapp/app.py").read_text()
+
+    assert "render_image_viewer(" in app_content, (
+        "webapp/app.py should use render_image_viewer function for image display"
+    )
+
+
+def test_webapp_app_has_queue_master_layout():
+    """Story 3.1 AC #5: webapp/app.py should implement Queue Master layout columns."""
+    app_content = Path("webapp/app.py").read_text()
+
+    assert "st.columns([1, 3])" in app_content, (
+        "webapp/app.py should use st.columns([1, 3]) for Queue Master layout"
+    )
+
+
+def test_webapp_app_has_review_queue_placeholder():
+    """Story 3.1 AC #5: webapp/app.py should have placeholder for review queue."""
+    app_content = Path("webapp/app.py").read_text()
+
+    assert "Review Queue" in app_content, (
+        "webapp/app.py should have Review Queue placeholder"
+    )

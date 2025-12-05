@@ -13,6 +13,7 @@ from webapp.components.upload import (
     is_nifti_file,
     render_upload_component,
 )
+from webapp.components.viewer import render_image_viewer
 
 __all__ = [
     "MAX_FILE_SIZE_BYTES",
@@ -21,6 +22,7 @@ __all__ = [
     "UploadedVolume",
     "clear_upload",
     "is_nifti_file",
+    "render_image_viewer",
     "render_slice_selector",
     "render_upload_component",
 ]

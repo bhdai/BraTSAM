@@ -17,6 +17,7 @@ from webapp.components.confidence_indicator import (
 )
 from webapp.components.slice_selector import render_slice_selector
 from webapp.components.upload import UploadedImage, UploadedVolume, render_upload_component
+from webapp.components.viewer import render_image_viewer
 from webapp.utils.inference import PipelineResult
 
 # Configure logging (backend)
@@ -111,47 +112,78 @@ def main() -> None:
     uploaded = render_upload_component()
     
     if uploaded:
-        if isinstance(uploaded, UploadedVolume):
-            # 3D Volume handling (AC: #1, #2, #3, #4, #5)
-            st.info(
-                f"🔬 3D volume detected: "
-                f"{uploaded.dimensions[0]}×{uploaded.dimensions[1]}×{uploaded.dimensions[2]}"
-            )
-            
-            # Slice selector (AC: #3, #4) - pass file_id to reset on new volume
-            slice_idx = render_slice_selector(uploaded.num_slices, uploaded.file_id)
-            
-            # Extract and normalize slice (AC: #2, #4)
-            slice_2d = extract_slice(uploaded.volume_data, slice_idx)
-            normalized = normalize_slice(slice_2d)
-            
-            # Convert grayscale to RGB for display
-            display_img = np.stack([normalized, normalized, normalized], axis=-1)
-            
-            st.image(
-                display_img,
-                caption=f"{uploaded.filename} - Slice {slice_idx}",
-                use_container_width=True,
-            )
-            
-            # Metadata display (AC: #5)
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Filename", uploaded.filename)
-            col2.metric("Size", f"{uploaded.file_size_mb:.2f} MB")
-            col3.metric(
-                "Dimensions",
-                f"{uploaded.dimensions[0]}×{uploaded.dimensions[1]}×{uploaded.dimensions[2]}",
-            )
-            col4.metric("Current Slice", f"{slice_idx + 1}/{uploaded.num_slices}")
-        else:
-            # 2D Image handling (existing behavior) (AC: #6)
-            st.success("✅ Ready to process")
-            st.image(uploaded.data, caption=uploaded.filename, use_container_width=True)
-            
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Filename", uploaded.filename)
-            col2.metric("Size", f"{uploaded.file_size_mb:.2f} MB")
-            col3.metric("Dimensions", f"{uploaded.dimensions[1]}x{uploaded.dimensions[0]}")
+        # Initialize overlay toggle states in session state
+        if "show_bounding_box" not in st.session_state:
+            st.session_state.show_bounding_box = True
+        if "show_segmentation_mask" not in st.session_state:
+            st.session_state.show_segmentation_mask = True
+
+        # Queue Master layout: sidebar for review queue (Story 4.2), main area for viewer
+        queue_col, viewer_col = st.columns([1, 3])
+        
+        with queue_col:
+            st.markdown("### 📋 Review Queue")
+            st.caption("Queue functionality coming in Epic 4")
+            # Placeholder for Story 4.2 - batch review queue
+        
+        with viewer_col:
+            # Overlay toggle controls (Story 3.2, AC #3, #4)
+            toggle_col1, toggle_col2 = st.columns(2)
+            with toggle_col1:
+                st.checkbox("Show Bounding Box", key="show_bounding_box")
+            with toggle_col2:
+                st.checkbox("Show Mask", key="show_segmentation_mask")
+
+            if isinstance(uploaded, UploadedVolume):
+                # 3D Volume handling (AC: #1, #2, #3, #4, #5)
+                st.info(
+                    f"🔬 3D volume detected: "
+                    f"{uploaded.dimensions[0]}×{uploaded.dimensions[1]}×{uploaded.dimensions[2]}"
+                )
+                
+                # Slice selector (AC: #3, #4) - pass file_id to reset on new volume
+                slice_idx = render_slice_selector(uploaded.num_slices, uploaded.file_id)
+                
+                # Extract and normalize slice (AC: #2, #4)
+                slice_2d = extract_slice(uploaded.volume_data, slice_idx)
+                normalized = normalize_slice(slice_2d)
+                
+                # Convert grayscale to RGB for display
+                display_img = np.stack([normalized, normalized, normalized], axis=-1)
+                
+                # Use viewer component (Story 3.1, 3.2)
+                render_image_viewer(
+                    display_img,
+                    caption=f"{uploaded.filename} - Slice {slice_idx}",
+                    show_box=st.session_state.show_bounding_box,
+                    show_mask=st.session_state.show_segmentation_mask,
+                )
+                
+                # Metadata display (AC: #5)
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Filename", uploaded.filename)
+                col2.metric("Size", f"{uploaded.file_size_mb:.2f} MB")
+                col3.metric(
+                    "Dimensions",
+                    f"{uploaded.dimensions[0]}×{uploaded.dimensions[1]}×{uploaded.dimensions[2]}",
+                )
+                col4.metric("Current Slice", f"{slice_idx + 1}/{uploaded.num_slices}")
+            else:
+                # 2D Image handling (existing behavior) (AC: #6)
+                st.success("✅ Ready to process")
+                
+                # Use viewer component (Story 3.1, 3.2)
+                render_image_viewer(
+                    uploaded.data,
+                    caption=uploaded.filename,
+                    show_box=st.session_state.show_bounding_box,
+                    show_mask=st.session_state.show_segmentation_mask,
+                )
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Filename", uploaded.filename)
+                col2.metric("Size", f"{uploaded.file_size_mb:.2f} MB")
+                col3.metric("Dimensions", f"{uploaded.dimensions[1]}x{uploaded.dimensions[0]}")
     
     logger.info("BraTSAM main page rendered")
 
