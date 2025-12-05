@@ -90,3 +90,61 @@ def test_webapp_app_py_has_sidebar_config():
     assert 'initial_sidebar_state="expanded"' in app_content, (
         "webapp/app.py should set initial_sidebar_state='expanded'"
     )
+
+
+# Story 2.4 Tests: Confidence Display Integration
+
+
+def test_webapp_app_imports_confidence_indicator():
+    """AC #3, #5: webapp/app.py should import confidence indicator."""
+    app_content = Path("webapp/app.py").read_text()
+
+    assert "from webapp.components.confidence_indicator import" in app_content, (
+        "webapp/app.py should import from confidence_indicator"
+    )
+    assert "render_confidence_indicator" in app_content, (
+        "webapp/app.py should import render_confidence_indicator"
+    )
+
+
+def test_webapp_app_imports_pipeline_result():
+    """AC #5: webapp/app.py should import PipelineResult."""
+    app_content = Path("webapp/app.py").read_text()
+
+    assert "from webapp.utils.inference import PipelineResult" in app_content, (
+        "webapp/app.py should import PipelineResult for inference results"
+    )
+
+
+def test_webapp_app_has_display_inference_results():
+    """AC #3, #5: webapp/app.py should have display_inference_results function."""
+    app_content = Path("webapp/app.py").read_text()
+
+    assert "def display_inference_results" in app_content, (
+        "webapp/app.py should define display_inference_results function"
+    )
+
+
+def test_webapp_app_display_function_uses_confidence_indicator():
+    """AC #3: display_inference_results should use render_confidence_indicator."""
+    app_content = Path("webapp/app.py").read_text()
+
+    # Check that the display function calls render_confidence_indicator
+    assert "render_confidence_indicator(result)" in app_content, (
+        "display_inference_results should call render_confidence_indicator"
+    )
+
+
+def test_webapp_app_shows_threshold_explanation():
+    """AC #5: App should show tooltip explaining classification thresholds."""
+    app_content = Path("webapp/app.py").read_text()
+
+    assert "Thresholds" in app_content, (
+        "webapp/app.py should display threshold explanation"
+    )
+    assert "90%" in app_content, (
+        "webapp/app.py should mention 90% threshold for auto-approved"
+    )
+    assert "50" in app_content, (
+        "webapp/app.py should mention 50% threshold for needs-review"
+    )

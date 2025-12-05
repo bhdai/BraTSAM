@@ -20,6 +20,8 @@ from webapp.utils.inference import (
     PipelineResult,
     _detect_tumor,
     _segment_tumor,
+    classify_confidence,
+    compute_confidence,
     load_models,
     run_pipeline,
 )
@@ -185,6 +187,206 @@ class TestConfidenceConstants:
     def test_needs_review_threshold(self):
         """Needs-review threshold should be 0.50."""
         assert CONFIDENCE_NEEDS_REVIEW == 0.50
+
+
+class TestComputeConfidence:
+    """Tests for compute_confidence helper function (AC: #1, #4)."""
+
+    def test_compute_confidence_returns_minimum(self):
+        """compute_confidence should return minimum of both scores."""
+        assert compute_confidence(0.95, 0.88) == 0.88
+        assert compute_confidence(0.75, 0.92) == 0.75
+
+    def test_compute_confidence_equal_scores(self):
+        """compute_confidence should handle equal scores."""
+        assert compute_confidence(0.80, 0.80) == 0.80
+
+    def test_compute_confidence_yolo_none(self):
+        """compute_confidence should return None if yolo_conf is None."""
+        assert compute_confidence(None, 0.85) is None
+
+    def test_compute_confidence_sam_none(self):
+        """compute_confidence should return yolo_conf if sam_iou is None."""
+        assert compute_confidence(0.85, None) == 0.85
+
+    def test_compute_confidence_both_none(self):
+        """compute_confidence should return None if both are None."""
+        assert compute_confidence(None, None) is None
+
+    def test_compute_confidence_zero_scores(self):
+        """compute_confidence should handle zero scores."""
+        assert compute_confidence(0.0, 0.5) == 0.0
+        assert compute_confidence(0.5, 0.0) == 0.0
+        assert compute_confidence(0.0, 0.0) == 0.0
+
+    def test_compute_confidence_boundary_values(self):
+        """compute_confidence should handle boundary values correctly."""
+        assert compute_confidence(1.0, 1.0) == 1.0
+        assert compute_confidence(0.90, 0.95) == 0.90
+        assert compute_confidence(0.50, 0.60) == 0.50
+
+
+class TestClassifyConfidence:
+    """Tests for classify_confidence helper function (AC: #2, #4)."""
+
+    def test_classify_confidence_auto_approved(self):
+        """classify_confidence should return auto-approved for >= 0.90."""
+        assert classify_confidence(0.95) == "auto-approved"
+        assert classify_confidence(0.90) == "auto-approved"
+        assert classify_confidence(1.0) == "auto-approved"
+
+    def test_classify_confidence_needs_review(self):
+        """classify_confidence should return needs-review for 0.50 <= x < 0.90."""
+        assert classify_confidence(0.89) == "needs-review"
+        assert classify_confidence(0.50) == "needs-review"
+        assert classify_confidence(0.70) == "needs-review"
+
+    def test_classify_confidence_manual_required(self):
+        """classify_confidence should return manual-required for < 0.50."""
+        assert classify_confidence(0.49) == "manual-required"
+        assert classify_confidence(0.25) == "manual-required"
+        assert classify_confidence(0.0) == "manual-required"
+
+    def test_classify_confidence_none(self):
+        """classify_confidence should return manual-required for None."""
+        assert classify_confidence(None) == "manual-required"
+
+    def test_classify_confidence_exact_thresholds(self):
+        """classify_confidence should handle exact threshold values."""
+        # Exactly 0.90 should be auto-approved
+        assert classify_confidence(0.90) == "auto-approved"
+        # Just below 0.90 should be needs-review
+        assert classify_confidence(0.8999) == "needs-review"
+        # Exactly 0.50 should be needs-review
+        assert classify_confidence(0.50) == "needs-review"
+        # Just below 0.50 should be manual-required
+        assert classify_confidence(0.4999) == "manual-required"
+
+
+class TestNoDetectionClassification:
+    """Tests for AC #4: No detection should be manual-required."""
+
+    def test_no_detection_returns_manual_required(self):
+        """AC #4: When no tumor detected, classification should be manual-required."""
+        result = PipelineResult(
+            success=False,
+            stage="detection",
+            error_message="No tumor detected",
+            yolo_confidence=None,
+            sam_iou=None,
+        )
+        assert result.classification == "manual-required"
+        assert result.confidence is None
+
+    def test_failed_pipeline_at_detection_is_manual_required(self):
+        """AC #4: Failed detection stage should classify as manual-required."""
+        result = PipelineResult(
+            success=False,
+            stage="detection",
+            error_message="YOLO returned no boxes",
+        )
+        assert result.classification == "manual-required"
+
+    def test_detection_failure_with_zero_confidence(self):
+        """AC #4: Zero confidence should be manual-required."""
+        result = PipelineResult(
+            success=False,
+            stage="detection",
+            yolo_confidence=0.0,
+        )
+        # With only yolo_confidence=0.0, confidence returns 0.0
+        assert result.confidence == 0.0
+        assert result.classification == "manual-required"
+
+
+class TestConfidenceScoreCombinations:
+    """Tests for various YOLO/SAM score combinations (AC #1)."""
+
+    @pytest.mark.parametrize(
+        "yolo_conf,sam_iou,expected_conf,expected_class",
+        [
+            # High confidence cases
+            (0.99, 0.98, 0.98, "auto-approved"),
+            (0.95, 0.92, 0.92, "auto-approved"),
+            (0.90, 0.90, 0.90, "auto-approved"),
+            # Medium confidence cases
+            (0.89, 0.85, 0.85, "needs-review"),
+            (0.75, 0.70, 0.70, "needs-review"),
+            (0.60, 0.55, 0.55, "needs-review"),
+            (0.50, 0.50, 0.50, "needs-review"),
+            # Low confidence cases
+            (0.49, 0.45, 0.45, "manual-required"),
+            (0.30, 0.25, 0.25, "manual-required"),
+            (0.10, 0.05, 0.05, "manual-required"),
+            # Edge: YOLO high, SAM low
+            (0.95, 0.40, 0.40, "manual-required"),
+            # Edge: YOLO low, SAM high
+            (0.35, 0.90, 0.35, "manual-required"),
+        ],
+    )
+    def test_confidence_combinations(
+        self, yolo_conf, sam_iou, expected_conf, expected_class
+    ):
+        """AC #1: Combined confidence should be min of YOLO and SAM scores."""
+        result = PipelineResult(
+            success=True,
+            stage="segmentation",
+            yolo_confidence=yolo_conf,
+            sam_iou=sam_iou,
+        )
+        assert result.confidence == expected_conf
+        assert result.classification == expected_class
+
+
+class TestBatchProcessingClassification:
+    """Tests for batch processing scenarios (AC #6)."""
+
+    def test_multiple_results_independent_classification(self):
+        """AC #6: Each result should have independent classification."""
+        results = [
+            PipelineResult(
+                success=True,
+                stage="segmentation",
+                yolo_confidence=0.95,
+                sam_iou=0.92,
+            ),
+            PipelineResult(
+                success=True,
+                stage="segmentation",
+                yolo_confidence=0.75,
+                sam_iou=0.70,
+            ),
+            PipelineResult(
+                success=False,
+                stage="detection",
+                error_message="No tumor",
+            ),
+        ]
+
+        classifications = [r.classification for r in results]
+        assert classifications[0] == "auto-approved"
+        assert classifications[1] == "needs-review"
+        assert classifications[2] == "manual-required"
+
+    def test_batch_classification_counts(self):
+        """AC #6: Should be able to count results by classification tier."""
+        results = [
+            PipelineResult(success=True, stage="segmentation", yolo_confidence=0.95, sam_iou=0.92),
+            PipelineResult(success=True, stage="segmentation", yolo_confidence=0.91, sam_iou=0.90),
+            PipelineResult(success=True, stage="segmentation", yolo_confidence=0.75, sam_iou=0.70),
+            PipelineResult(success=True, stage="segmentation", yolo_confidence=0.60, sam_iou=0.55),
+            PipelineResult(success=False, stage="detection"),
+        ]
+
+        counts = {
+            "auto-approved": sum(1 for r in results if r.classification == "auto-approved"),
+            "needs-review": sum(1 for r in results if r.classification == "needs-review"),
+            "manual-required": sum(1 for r in results if r.classification == "manual-required"),
+        }
+
+        assert counts["auto-approved"] == 2
+        assert counts["needs-review"] == 2
+        assert counts["manual-required"] == 1
 
 
 class TestRunPipeline:

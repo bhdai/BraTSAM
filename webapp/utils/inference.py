@@ -49,6 +49,49 @@ SAM_MODEL_PATH = PROJECT_ROOT / "models" / "sam_model.pth"
 SAM_BASE_MODEL_ID = "facebook/sam-vit-base"
 
 
+def compute_confidence(yolo_conf: float | None, sam_iou: float | None) -> float | None:
+    """Compute combined confidence from YOLO and SAM scores.
+
+    The combined confidence is the minimum of both scores, following
+    the conservative scoring strategy where the weakest link determines
+    overall confidence.
+
+    Args:
+        yolo_conf: YOLO detection confidence score (0-1), or None.
+        sam_iou: SAM segmentation IoU score (0-1), or None.
+
+    Returns:
+        Combined confidence score (minimum of both) if both are available,
+        yolo_conf as fallback if only YOLO score exists, or None.
+    """
+    if yolo_conf is not None and sam_iou is not None:
+        return min(yolo_conf, sam_iou)
+    return yolo_conf  # Fall back to YOLO if no SAM score
+
+
+def classify_confidence(confidence: float | None) -> str:
+    """Classify confidence score into triage tier.
+
+    Three-tier classification:
+    - "auto-approved": High confidence (>= 0.90), minimal review needed
+    - "needs-review": Medium confidence (0.50-0.89), verification recommended
+    - "manual-required": Low/no confidence (< 0.50 or None), intervention needed
+
+    Args:
+        confidence: Combined confidence score (0-1), or None.
+
+    Returns:
+        Classification string: "auto-approved", "needs-review", or "manual-required".
+    """
+    if confidence is None:
+        return "manual-required"
+    if confidence >= CONFIDENCE_AUTO_APPROVED:
+        return "auto-approved"
+    elif confidence >= CONFIDENCE_NEEDS_REVIEW:
+        return "needs-review"
+    return "manual-required"
+
+
 @dataclass
 class PipelineResult:
     """Result from YOLO → SAM inference pipeline.

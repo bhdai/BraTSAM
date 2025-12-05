@@ -11,8 +11,13 @@ import streamlit as st
 
 from preprocessing.normalize import normalize_slice
 from preprocessing.volume import extract_slice
+from webapp.components.confidence_indicator import (
+    render_confidence_indicator,
+    render_confidence_score,
+)
 from webapp.components.slice_selector import render_slice_selector
 from webapp.components.upload import UploadedImage, UploadedVolume, render_upload_component
+from webapp.utils.inference import PipelineResult
 
 # Configure logging (backend)
 logging.basicConfig(
@@ -28,6 +33,51 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+
+def display_inference_results(result: PipelineResult) -> None:
+    """Display inference results with confidence indicator (AC #3, #5).
+
+    Shows the triage classification badge, confidence score, and
+    relevant result details based on pipeline outcome.
+
+    Args:
+        result: PipelineResult from the inference pipeline.
+    """
+    st.subheader("📊 Inference Results")
+
+    # Display confidence indicator badge (AC #3)
+    col1, col2 = st.columns([1, 3])
+
+    with col1:
+        render_confidence_indicator(result)
+
+    with col2:
+        render_confidence_score(result)
+
+    # Display threshold explanation tooltip
+    st.markdown(
+        """
+        <div style="font-size: 0.8em; color: #666; margin-top: 8px;">
+        <b>Thresholds:</b> ✅ Auto-Approved ≥90% | ⚠️ Needs Review 50-89% | 🔴 Manual Required &lt;50%
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Display additional result details
+    if result.success:
+        st.success(f"✅ Pipeline completed at stage: {result.stage}")
+
+        if result.yolo_confidence is not None:
+            st.markdown(f"**YOLO Detection Confidence:** {result.yolo_confidence:.2%}")
+
+        if result.sam_iou is not None:
+            st.markdown(f"**SAM Segmentation IoU:** {result.sam_iou:.2%}")
+    else:
+        st.error(f"❌ Pipeline failed at stage: {result.stage}")
+        if result.error_message:
+            st.warning(f"**Error:** {result.error_message}")
 
 
 def main() -> None:
