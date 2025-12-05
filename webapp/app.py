@@ -26,10 +26,20 @@ from webapp.components.confidence_indicator import (
     render_confidence_indicator,
     render_confidence_score,
 )
+from webapp.components.review_queue import render_review_queue
 from webapp.components.slice_selector import render_slice_selector
 from webapp.components.upload import UploadedImage, UploadedVolume, render_upload_component
 from webapp.components.viewer import render_image_viewer, render_interactive_viewer
 from webapp.utils.inference import PipelineResult, run_segmentation_only
+from webapp.utils.session import initialize_batch_state
+from webapp.utils.shortcuts import (
+    handle_approve_shortcut,
+    handle_cancel_shortcut,
+    handle_edit_shortcut,
+    handle_navigation_shortcut,
+    register_shortcuts,
+    render_shortcut_help,
+)
 
 # Configure logging (backend)
 logging.basicConfig(
@@ -102,6 +112,34 @@ def main() -> None:
     st.sidebar.header("Navigation")
     st.sidebar.info("Welcome to BraTSAM! Feature components will be added here.")
     
+    # Keyboard shortcuts help panel (Story 4.3, AC #9)
+    with st.sidebar:
+        render_shortcut_help()
+    
+    # Hidden shortcut buttons (Story 4.3)
+    # These buttons are triggered by keyboard shortcuts via streamlit-shortcuts
+    # They're placed in an empty container to be invisible
+    with st.container():
+        shortcut_cols = st.columns(5)
+        with shortcut_cols[0]:
+            if st.button("Approve", key="btn_approve", help="SPACE"):
+                handle_approve_shortcut()
+        with shortcut_cols[1]:
+            if st.button("Edit", key="btn_edit", help="E"):
+                handle_edit_shortcut()
+        with shortcut_cols[2]:
+            if st.button("◀ Prev", key="btn_prev", help="A or ←"):
+                handle_navigation_shortcut("previous")
+        with shortcut_cols[3]:
+            if st.button("Next ▶", key="btn_next", help="D or →"):
+                handle_navigation_shortcut("next")
+        with shortcut_cols[4]:
+            if st.button("Cancel", key="btn_cancel", help="ESC"):
+                handle_cancel_shortcut()
+    
+    # Register keyboard shortcuts (Story 4.3)
+    register_shortcuts()
+    
     st.markdown(
         """
         ## Welcome to BraTSAM
@@ -137,8 +175,10 @@ def main() -> None:
         
         with queue_col:
             st.markdown("### 📋 Review Queue")
-            st.caption("Queue functionality coming in Epic 4")
-            # Placeholder for Story 4.2 - batch review queue
+            # Initialize batch state for session persistence (Story 4.1)
+            initialize_batch_state()
+            # Render the Queue Master component (Story 4.2)
+            render_review_queue()
         
         with viewer_col:
             # Initialize edit mode state (Story 3.4)

@@ -203,6 +203,7 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "streamlit" },
     { name = "streamlit-drawable-canvas" },
+    { name = "streamlit-shortcuts" },
     { name = "synapseclient" },
     { name = "torch", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux' and sys_platform != 'win32'" },
     { name = "torch", version = "2.8.0+cu126", source = { registry = "https://download.pytorch.org/whl/cu126" }, marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -229,6 +230,7 @@ requires-dist = [
     { name = "scikit-learn", specifier = ">=1.7.2" },
     { name = "streamlit", specifier = ">=1.40.0" },
     { name = "streamlit-drawable-canvas", specifier = ">=0.9.3" },
+    { name = "streamlit-shortcuts", specifier = ">=0.1.0" },
     { name = "synapseclient", specifier = ">=4.9.0" },
     { name = "torch", marker = "sys_platform != 'linux' and sys_platform != 'win32'", specifier = ">=2.8.0" },
     { name = "torch", marker = "sys_platform == 'linux' or sys_platform == 'win32'", specifier = ">=2.8.0", index = "https://download.pytorch.org/whl/cu126" },
@@ -2304,6 +2306,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/07/fe/69768e7391587b97ef5c503c263bdf960e21f20c02c6b17427a8963af0c6/streamlit-drawable-canvas-0.9.3.tar.gz", hash = "sha256:a31e581bfd63545ecbca71bc3286c09f0542e4199109d33f56392345996802f5", size = 1158330, upload-time = "2023-06-05T17:16:20.755Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d6/87/bc94460ec77d824735da56fe8e321baf0692595c2a8a90b55f6908a5edc4/streamlit_drawable_canvas-0.9.3-py3-none-any.whl", hash = "sha256:fbb5e29017d359d5438e327ca0a64d0b337a9f2e1f999cd7593baa5bb8a27c25", size = 1169097, upload-time = "2023-06-05T17:16:18.167Z" },
+]
+
+[[package]]
+name = "streamlit-shortcuts"
+version = "1.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "streamlit" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/87/6d/a3b9befa11528163b96c216f7e4152c7e6df8976bb6ad8a42fb82e8c1778/streamlit_shortcuts-1.2.1.tar.gz", hash = "sha256:c982ace38ce6f887beef2bd3f16c36d645bdcbee010c5585e6963e4615fc8f16", size = 111285, upload-time = "2025-07-31T21:02:57.65Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e0/b5/a9d1ad477ae69db0b6cef35bf40154ec634a42657ff684a4b3c2024dde36/streamlit_shortcuts-1.2.1-py3-none-any.whl", hash = "sha256:58fa6d375c9f91068bf1400f9870ff3d382b4e4f1dcbf26e05567e4db3547375", size = 6856, upload-time = "2025-07-31T21:02:56.273Z" },
 ]
 
 [[package]]
