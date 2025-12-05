@@ -1,7 +1,7 @@
 """Unit tests for webapp.utils.inference module.
 
 Tests for PipelineResult dataclass, run_pipeline, load_models,
-confidence-based classification system, and YOLO detection.
+confidence-based classification system, YOLO detection, and SAM segmentation.
 """
 
 import time
@@ -9,14 +9,17 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+import torch
 
 # These imports will fail initially (RED phase)
 from webapp.utils.inference import (
     CONFIDENCE_AUTO_APPROVED,
     CONFIDENCE_NEEDS_REVIEW,
+    MASK_BINARY_THRESHOLD,
     YOLO_MIN_CONFIDENCE,
     PipelineResult,
     _detect_tumor,
+    _segment_tumor,
     load_models,
     run_pipeline,
 )
@@ -302,17 +305,17 @@ def mock_models():
     }
     mock_processor.return_value = mock_inputs
 
-    # Mock SAM model
+    # Mock SAM model (SamFineTuner wrapper)
     mock_sam = MagicMock()
     mock_param = MagicMock()
-    mock_param.device = "cpu"
+    mock_param.device = torch.device("cpu")
     mock_sam.parameters.return_value = iter([mock_param])
-    mock_outputs = MagicMock()
-    mock_outputs.pred_masks = MagicMock()
-    mock_outputs.pred_masks.cpu.return_value.numpy.return_value = np.ones(
-        (1, 1, 1, 256, 256)
-    )
-    mock_sam.return_value = mock_outputs
+
+    # Mock sam_model() call with full_outputs=True - returns dict
+    mock_sam.return_value = {
+        'pred_masks': torch.ones(1, 1, 3, 256, 256),  # [B, N, M, H, W]
+        'iou_scores': torch.tensor([[[0.85, 0.80, 0.75]]]),  # [B, N, M]
+    }
 
     return mock_yolo, mock_processor, mock_sam
 
@@ -696,3 +699,426 @@ class TestYoloIntegration:
             assert confidence is not None
             assert 0.0 <= confidence <= 1.0
             assert confidence >= YOLO_MIN_CONFIDENCE
+
+
+# SAM Segmentation Tests (Story 2.3)
+
+
+class TestMaskBinaryThresholdConstant:
+    """Tests for MASK_BINARY_THRESHOLD constant."""
+
+    def test_mask_binary_threshold_exists(self):
+        """MASK_BINARY_THRESHOLD constant should exist."""
+        assert MASK_BINARY_THRESHOLD is not None
+
+    def test_mask_binary_threshold_value(self):
+        """MASK_BINARY_THRESHOLD should be 127."""
+        assert MASK_BINARY_THRESHOLD == 127
+
+    def test_mask_binary_threshold_reasonable_range(self):
+        """MASK_BINARY_THRESHOLD should be between 0 and 255."""
+        assert 0 < MASK_BINARY_THRESHOLD < 255
+
+
+class TestSegmentTumor:
+    """Tests for _segment_tumor function."""
+
+    def test_segment_tumor_returns_tuple(
+        self, mock_sam_processor, mock_sam_model, sample_image
+    ):
+        """_segment_tumor should return a tuple of (mask, iou_score)."""
+        box = [100, 100, 200, 200]
+        result = _segment_tumor(sample_image, box, mock_sam_processor, mock_sam_model)
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+
+    def test_segment_tumor_returns_binary_mask(
+        self, mock_sam_processor, mock_sam_model, sample_image
+    ):
+        """_segment_tumor should return a binary numpy mask."""
+        box = [100, 100, 200, 200]
+        mask, _ = _segment_tumor(sample_image, box, mock_sam_processor, mock_sam_model)
+        assert isinstance(mask, np.ndarray)
+        assert mask.dtype == np.uint8
+        # Binary mask should only contain 0 and 1
+        unique_values = np.unique(mask)
+        assert all(v in [0, 1] for v in unique_values)
+
+    def test_segment_tumor_mask_dimensions_match_input(
+        self, mock_sam_processor, mock_sam_model_256_output, sample_image
+    ):
+        """_segment_tumor mask should have same dimensions as input image."""
+        box = [100, 100, 200, 200]
+        mask, _ = _segment_tumor(
+            sample_image, box, mock_sam_processor, mock_sam_model_256_output
+        )
+        # Input is (256, 256, 3), mask should be (256, 256)
+        assert mask.shape == sample_image.shape[:2]
+
+    def test_segment_tumor_mask_resized_from_256(
+        self, mock_sam_processor, mock_sam_model_256_output
+    ):
+        """_segment_tumor should resize SAM's 256x256 output to match input size."""
+        # Create non-256x256 input image
+        input_image = np.random.randint(0, 255, (512, 512, 3), dtype=np.uint8)
+        box = [100, 100, 200, 200]
+        mask, _ = _segment_tumor(
+            input_image, box, mock_sam_processor, mock_sam_model_256_output
+        )
+        # Should resize to 512x512
+        assert mask.shape == (512, 512)
+
+    def test_segment_tumor_mask_resized_nonsquare(
+        self, mock_sam_processor, mock_sam_model_256_output
+    ):
+        """_segment_tumor should handle non-square input images."""
+        # Create non-square input image
+        input_image = np.random.randint(0, 255, (224, 336, 3), dtype=np.uint8)
+        box = [50, 50, 150, 150]
+        mask, _ = _segment_tumor(
+            input_image, box, mock_sam_processor, mock_sam_model_256_output
+        )
+        # Should resize to match input dimensions
+        assert mask.shape == (224, 336)
+
+    def test_segment_tumor_returns_iou_score(
+        self, mock_sam_processor, mock_sam_model_with_iou, sample_image
+    ):
+        """_segment_tumor should return IoU score between 0 and 1."""
+        box = [100, 100, 200, 200]
+        _, iou_score = _segment_tumor(
+            sample_image, box, mock_sam_processor, mock_sam_model_with_iou
+        )
+        assert iou_score is not None
+        assert isinstance(iou_score, float)
+        assert 0.0 <= iou_score <= 1.0
+
+    def test_segment_tumor_extracts_iou_from_output(
+        self, mock_sam_processor, mock_sam_model_with_iou, sample_image
+    ):
+        """_segment_tumor should extract IoU from outputs.iou_scores."""
+        box = [100, 100, 200, 200]
+        _, iou_score = _segment_tumor(
+            sample_image, box, mock_sam_processor, mock_sam_model_with_iou
+        )
+        # Mock returns 0.85
+        assert iou_score == pytest.approx(0.85, rel=1e-5)
+
+    def test_segment_tumor_iou_fallback_when_unavailable(
+        self, mock_sam_processor, mock_sam_model_no_iou, sample_image
+    ):
+        """_segment_tumor should use fallback heuristic when IoU unavailable."""
+        box = [100, 100, 200, 200]
+        _, iou_score = _segment_tumor(
+            sample_image, box, mock_sam_processor, mock_sam_model_no_iou
+        )
+        # Fallback should return a score between 0.5 and 0.95
+        assert iou_score is not None
+        assert 0.5 <= iou_score <= 0.95
+
+    def test_segment_tumor_mask_preserves_binary_after_resize(
+        self, mock_sam_processor, mock_sam_model_256_output
+    ):
+        """_segment_tumor resized mask should still be binary (0 or 1)."""
+        input_image = np.random.randint(0, 255, (512, 512, 3), dtype=np.uint8)
+        box = [100, 100, 200, 200]
+        mask, _ = _segment_tumor(
+            input_image, box, mock_sam_processor, mock_sam_model_256_output
+        )
+        # After resize, should still be binary
+        unique_values = np.unique(mask)
+        assert all(v in [0, 1] for v in unique_values)
+
+    def test_segment_tumor_logs_timing(
+        self, mock_sam_processor, mock_sam_model, sample_image, caplog
+    ):
+        """_segment_tumor should log timing information."""
+        import logging
+
+        box = [100, 100, 200, 200]
+        with caplog.at_level(logging.INFO):
+            _segment_tumor(sample_image, box, mock_sam_processor, mock_sam_model)
+        # Should log timing information
+        assert any("time=" in record.message for record in caplog.records)
+
+    def test_segment_tumor_logs_mask_pixels(
+        self, mock_sam_processor, mock_sam_model, sample_image, caplog
+    ):
+        """_segment_tumor should log mask pixel count."""
+        import logging
+
+        box = [100, 100, 200, 200]
+        with caplog.at_level(logging.INFO):
+            _segment_tumor(sample_image, box, mock_sam_processor, mock_sam_model)
+        # Should log mask_pixels
+        assert any("mask_pixels=" in record.message for record in caplog.records)
+
+    def test_segment_tumor_logs_iou_score(
+        self, mock_sam_processor, mock_sam_model_with_iou, sample_image, caplog
+    ):
+        """_segment_tumor should log IoU score."""
+        import logging
+
+        box = [100, 100, 200, 200]
+        with caplog.at_level(logging.INFO):
+            _segment_tumor(
+                sample_image, box, mock_sam_processor, mock_sam_model_with_iou
+            )
+        # Should log iou=
+        assert any("iou=" in record.message for record in caplog.records)
+
+    def test_segment_tumor_selects_best_mask_by_iou(
+        self, mock_sam_processor, sample_image
+    ):
+        """_segment_tumor should select the mask with highest IoU score."""
+        # Create a mock where the second mask (index 1) has highest IoU
+        model = MagicMock()
+        mock_param = MagicMock()
+        mock_param.device = torch.device("cpu")
+        model.parameters.return_value = iter([mock_param])
+
+        # Create distinct masks for each proposal
+        mask_data = torch.zeros(1, 1, 3, 256, 256)
+        mask_data[0, 0, 0, 50:100, 50:100] = 1.0    # Mask 0: IoU 0.70
+        mask_data[0, 0, 1, 100:200, 100:200] = 1.0  # Mask 1: IoU 0.95 (BEST)
+        mask_data[0, 0, 2, 150:180, 150:180] = 1.0  # Mask 2: IoU 0.60
+
+        # Second mask (index 1) has highest IoU
+        model.return_value = {
+            'pred_masks': mask_data,
+            'iou_scores': torch.tensor([[[0.70, 0.95, 0.60]]]),  # [B, N, M]
+        }
+
+        box = [100, 100, 200, 200]
+        mask, iou_score = _segment_tumor(sample_image, box, mock_sam_processor, model)
+
+        # Should return IoU for best mask (0.95)
+        assert iou_score == pytest.approx(0.95, rel=1e-5)
+        # Mask should be the second proposal (100:200, 100:200 region)
+        # which covers more area than mask 0 or 2
+        assert mask.sum() > 0
+
+
+# SAM Fixtures
+
+
+@pytest.fixture
+def mock_sam_processor():
+    """Create mock SAM processor."""
+    processor = MagicMock()
+    processor.return_value = {
+        "pixel_values": torch.zeros(1, 3, 1024, 1024),
+        "input_boxes": torch.tensor([[[[100, 100, 200, 200]]]]),
+    }
+    return processor
+
+
+@pytest.fixture
+def mock_sam_model():
+    """Create mock SAM model with matching output dimensions."""
+    model = MagicMock()
+    # Mock parameters for device detection
+    mock_param = MagicMock()
+    mock_param.device = torch.device("cpu")
+    model.parameters.return_value = iter([mock_param])
+
+    # Mock sam_model() call with full_outputs=True - returns dict
+    # [B, N, M, H, W] format with M=3 mask proposals
+    model.return_value = {
+        'pred_masks': torch.ones(1, 1, 3, 256, 256),
+        'iou_scores': torch.tensor([[[0.85, 0.80, 0.75]]]),  # [B, N, M]
+    }
+    return model
+
+
+@pytest.fixture
+def mock_sam_model_256_output():
+    """Create mock SAM model that outputs 256x256 masks."""
+    model = MagicMock()
+    mock_param = MagicMock()
+    mock_param.device = torch.device("cpu")
+    model.parameters.return_value = iter([mock_param])
+
+    # SAM default output is 256x256 with M=3 mask proposals
+    mask_data = torch.zeros(1, 1, 3, 256, 256)
+    # Add some variation (partial mask) for each proposal
+    mask_data[0, 0, 0, 100:150, 100:150] = 1.0  # Best mask (IoU 0.88)
+    mask_data[0, 0, 1, 90:160, 90:160] = 1.0    # Second mask
+    mask_data[0, 0, 2, 80:170, 80:170] = 1.0    # Third mask
+
+    # Mock sam_model() call with full_outputs=True - returns dict
+    model.return_value = {
+        'pred_masks': mask_data,
+        'iou_scores': torch.tensor([[[0.88, 0.82, 0.78]]]),  # [B, N, M]
+    }
+    return model
+
+
+@pytest.fixture
+def mock_sam_model_with_iou():
+    """Create mock SAM model with IoU scores available."""
+    model = MagicMock()
+    mock_param = MagicMock()
+    mock_param.device = torch.device("cpu")
+    model.parameters.return_value = iter([mock_param])
+
+    # Mock sam_model() call with full_outputs=True - returns dict
+    # First mask (idx 0) has highest IoU (0.85)
+    model.return_value = {
+        'pred_masks': torch.ones(1, 1, 3, 256, 256),  # [B, N, M, H, W]
+        'iou_scores': torch.tensor([[[0.85, 0.80, 0.75]]]),  # [B, N, M]
+    }
+    return model
+
+
+@pytest.fixture
+def mock_sam_model_no_iou():
+    """Create mock SAM model without IoU scores (tests fallback)."""
+    model = MagicMock()
+    mock_param = MagicMock()
+    mock_param.device = torch.device("cpu")
+    model.parameters.return_value = iter([mock_param])
+
+    # Create mask with ~10% coverage for fallback heuristic
+    mask_data = torch.zeros(1, 1, 3, 256, 256)
+    # Fill ~10% of the mask (for first proposal)
+    mask_data[0, 0, 0, 100:130, 100:180] = 1.0
+
+    # Mock sam_model() call with full_outputs=True - returns dict
+    # iou_scores is None to trigger fallback
+    model.return_value = {
+        'pred_masks': mask_data,
+        'iou_scores': None,
+    }
+    return model
+
+
+# SAM Integration Tests (Story 2.3)
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+class TestSamIntegration:
+    """Integration tests using the real SAM model.
+
+    These tests require GPU and the actual sam_model.pth file.
+    Mark with @pytest.mark.integration and @pytest.mark.slow.
+    """
+
+    @pytest.fixture
+    def sam_model_path(self):
+        """Path to the real SAM model."""
+        from pathlib import Path
+
+        model_path = Path(__file__).parent.parent / "models" / "sam_model.pth"
+        if not model_path.exists():
+            pytest.skip(f"SAM model not found at {model_path}")
+        return model_path
+
+    @pytest.fixture
+    def real_sam_models(self, sam_model_path):
+        """Load the real SAM processor and model with LoRA."""
+        import sys
+        from pathlib import Path
+
+        import torch
+        from transformers import SamProcessor
+
+        # Add project root to path for model import
+        project_root = Path(__file__).parent.parent
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+
+        from model import SamFineTuner
+
+        processor = SamProcessor.from_pretrained("facebook/sam-vit-base")
+        model = SamFineTuner(use_lora=True)
+        model.load_state_dict(torch.load(str(sam_model_path), map_location="cpu"))
+        model.eval()
+        return processor, model
+
+    @pytest.fixture
+    def sample_tumor_image(self):
+        """Create a sample image with a tumor-like region for testing."""
+        # Create a 256x256 grayscale image with a bright region
+        image = np.zeros((256, 256), dtype=np.uint8)
+        image += np.random.randint(20, 50, (256, 256), dtype=np.uint8)
+        # Add a bright elliptical region (simulated tumor)
+        y, x = np.ogrid[:256, :256]
+        center_x, center_y = 150, 150
+        radius_x, radius_y = 40, 30
+        mask = ((x - center_x) / radius_x) ** 2 + ((y - center_y) / radius_y) ** 2 <= 1
+        image[mask] = np.random.randint(180, 220, mask.sum(), dtype=np.uint8)
+        # Convert to RGB
+        rgb_image = np.stack([image, image, image], axis=-1)
+        return rgb_image
+
+    def test_real_sam_model_loads(self, real_sam_models):
+        """Real SAM model should load successfully."""
+        processor, model = real_sam_models
+        assert processor is not None
+        assert model is not None
+
+    def test_segment_tumor_with_real_model_returns_valid_mask(
+        self, real_sam_models, sample_tumor_image
+    ):
+        """Segmentation with real model should return valid binary mask."""
+        processor, model = real_sam_models
+        # Bounding box around the tumor region
+        box = [110, 120, 190, 180]
+        mask, iou_score = _segment_tumor(sample_tumor_image, box, processor, model)
+
+        # Verify mask properties
+        assert isinstance(mask, np.ndarray)
+        assert mask.dtype == np.uint8
+        assert mask.shape == sample_tumor_image.shape[:2]
+        # Should be binary
+        unique_values = np.unique(mask)
+        assert all(v in [0, 1] for v in unique_values)
+
+    def test_segment_tumor_with_real_model_returns_iou(
+        self, real_sam_models, sample_tumor_image
+    ):
+        """Segmentation with real model should return IoU score."""
+        processor, model = real_sam_models
+        box = [110, 120, 190, 180]
+        _, iou_score = _segment_tumor(sample_tumor_image, box, processor, model)
+
+        assert iou_score is not None
+        assert isinstance(iou_score, float)
+        # SAM IoU predictions can occasionally be slightly > 1.0
+        assert 0.0 <= iou_score <= 1.1
+
+    def test_segment_tumor_timing_requirements(
+        self, real_sam_models, sample_tumor_image
+    ):
+        """Segmentation should complete within timing requirements.
+
+        NFR: <4 seconds per slice on GPU (allowing more for cold start/CPU).
+        """
+        processor, model = real_sam_models
+        box = [110, 120, 190, 180]
+
+        start_time = time.perf_counter()
+        _segment_tumor(sample_tumor_image, box, processor, model)
+        elapsed = time.perf_counter() - start_time
+
+        # Allow 15 seconds for first inference (cold start) or CPU
+        # Production requirement is <4s on GPU after warm-up
+        assert elapsed < 15.0, f"Segmentation took {elapsed:.2f}s, expected <15s"
+
+    def test_segment_tumor_with_real_model_different_sizes(self, real_sam_models):
+        """Segmentation should work with different image sizes."""
+        processor, model = real_sam_models
+
+        # Test 512x512
+        image_512 = np.random.randint(0, 255, (512, 512, 3), dtype=np.uint8)
+        box_512 = [200, 200, 300, 300]
+        mask_512, _ = _segment_tumor(image_512, box_512, processor, model)
+        assert mask_512.shape == (512, 512)
+
+        # Test 224x224
+        image_224 = np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8)
+        box_224 = [50, 50, 150, 150]
+        mask_224, _ = _segment_tumor(image_224, box_224, processor, model)
+        assert mask_224.shape == (224, 224)

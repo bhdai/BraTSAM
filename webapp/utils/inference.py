@@ -9,7 +9,6 @@ ThreadPoolExecutor for background processing.
 """
 
 import logging
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,15 +18,17 @@ import numpy as np
 import torch
 from PIL import Image as PILImage
 
+# Project root for model paths
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
 if TYPE_CHECKING:
-    from peft import PeftModel
-    from transformers import SamModel, SamProcessor
+    from transformers import SamProcessor
     from ultralytics import YOLO
 
-# Add project root to sys.path for model imports
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-if str(PROJECT_ROOT) not in sys.path:
+    # Import SamFineTuner for type hints only
+    import sys
     sys.path.insert(0, str(PROJECT_ROOT))
+    from model import SamFineTuner
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -41,6 +42,11 @@ YOLO_MIN_CONFIDENCE = 0.25
 
 # Mask processing constants
 MASK_BINARY_THRESHOLD = 127
+
+# Model path constants
+YOLO_MODEL_PATH = PROJECT_ROOT / "models" / "yolo_model.pt"
+SAM_MODEL_PATH = PROJECT_ROOT / "models" / "sam_model.pth"
+SAM_BASE_MODEL_ID = "facebook/sam-vit-base"
 
 
 @dataclass
@@ -96,7 +102,7 @@ class PipelineResult:
         return "manual-required"
 
 
-def load_models() -> tuple["YOLO", "SamProcessor", "PeftModel"]:
+def load_models() -> tuple["YOLO", "SamProcessor", "SamFineTuner"]:
     """Load models once, cache across all sessions.
 
     This function should be decorated with @st.cache_resource when
@@ -120,27 +126,38 @@ def load_models() -> tuple["YOLO", "SamProcessor", "PeftModel"]:
         return _load_models_impl()
 
 
-def _load_models_impl() -> tuple["YOLO", "SamProcessor", "PeftModel"]:
+def _load_models_impl() -> tuple["YOLO", "SamProcessor", "SamFineTuner"]:
     """Internal implementation of model loading.
 
     Returns:
         Tuple of (YOLO model, SAM processor, SAM model with LoRA).
     """
-    from peft import PeftModel
-    from transformers import SamModel, SamProcessor
+    import sys
+
+    import torch
+    from transformers import SamProcessor
     from ultralytics import YOLO
 
+    # Add project root for model import (only at runtime)
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from model import SamFineTuner
+
     logger.info("Loading YOLO model...")
-    yolo_path = PROJECT_ROOT / "models" / "yolo_model.pt"
-    yolo = YOLO(str(yolo_path))
+    yolo = YOLO(str(YOLO_MODEL_PATH))
 
     logger.info("Loading SAM processor...")
-    sam_processor = SamProcessor.from_pretrained("facebook/sam-vit-base")
+    sam_processor = SamProcessor.from_pretrained(SAM_BASE_MODEL_ID)
 
     logger.info("Loading SAM model with LoRA weights...")
-    sam_model = SamModel.from_pretrained("facebook/sam-vit-base")
-    sam_lora_path = PROJECT_ROOT / "models" / "sam_model.pth"
-    sam_model = PeftModel.from_pretrained(sam_model, str(sam_lora_path))
+    sam_model = SamFineTuner(model_id=SAM_BASE_MODEL_ID, use_lora=True)
+    sam_model.load_state_dict(torch.load(str(SAM_MODEL_PATH), map_location="cpu"))
+    sam_model.eval()
+
+    # Move to GPU if available
+    if torch.cuda.is_available():
+        sam_model = sam_model.cuda()
+        logger.info("SAM model moved to GPU")
 
     logger.info("All models loaded successfully")
     return yolo, sam_processor, sam_model
@@ -150,7 +167,7 @@ def _load_models_impl() -> tuple["YOLO", "SamProcessor", "PeftModel"]:
 _cached_load_models = None
 
 
-def _load_models_cached() -> tuple["YOLO", "SamProcessor", "PeftModel"]:
+def _load_models_cached() -> tuple["YOLO", "SamProcessor", "SamFineTuner"]:
     """Streamlit-cached version of model loading."""
     import streamlit as st
 
@@ -216,7 +233,7 @@ def _segment_tumor(
     image: np.ndarray,
     box: list[int],
     sam_processor: "SamProcessor",
-    sam_model: "SamModel",
+    sam_model: "SamFineTuner",
 ) -> tuple[np.ndarray, float]:
     """Run SAM segmentation with bounding box prompt.
 
@@ -224,13 +241,15 @@ def _segment_tumor(
         image: RGB image as numpy array (H, W, 3).
         box: Bounding box [x_min, y_min, x_max, y_max].
         sam_processor: SAM processor for image preprocessing.
-        sam_model: SAM model with LoRA weights.
+        sam_model: SAM model with LoRA weights (SamFineTuner).
 
     Returns:
         Tuple of (binary_mask, iou_score).
-        Mask is numpy array with same H, W as input.
-        IoU score is placeholder (0.85) until ground truth comparison added.
+        Mask is numpy array with same H, W as input image.
+        IoU score is SAM's predicted IoU for the best mask proposal.
     """
+    start_time = time.perf_counter()
+
     # Preprocess image
     inputs = sam_processor(
         images=image,
@@ -242,23 +261,39 @@ def _segment_tumor(
     device = next(sam_model.parameters()).device
     inputs = {k: v.to(device) for k, v in inputs.items()}
 
-    # Run inference
+    # Run inference using SamFineTuner.forward() with full_outputs
+    # This returns all mask proposals and IoU scores for smart selection
     with torch.no_grad():
-        outputs = sam_model(**inputs)
+        outputs = sam_model(
+            pixel_values=inputs["pixel_values"],
+            input_boxes=inputs["input_boxes"],
+            full_outputs=True,
+        )
 
-    # Extract mask and IoU scores from SAM output
-    masks = outputs.pred_masks.cpu().numpy()
-    mask = masks[0, 0, 0]  # [B, N, M, H, W] → select first
+    # Extract masks and IoU scores
+    # pred_masks shape: [B, N, M, H, W] where M=3 mask proposals
+    # iou_scores shape: [B, N, M]
+    pred_masks = outputs["pred_masks"]
+    iou_scores = outputs["iou_scores"]
 
-    # Extract SAM's predicted IoU score if available
-    if hasattr(outputs, "iou_scores") and outputs.iou_scores is not None:
-        sam_iou = float(outputs.iou_scores[0, 0].cpu().numpy())
+    # Select best mask by IoU score (instead of hardcoded index 0)
+    if iou_scores is not None:
+        # Get IoU scores for first batch, first prompt: [M]
+        iou_per_mask = iou_scores[0, 0]  # shape: [M=3]
+        best_mask_idx = int(iou_per_mask.argmax().item())
+        sam_iou = float(iou_per_mask[best_mask_idx].cpu().item())
+        mask = pred_masks[0, 0, best_mask_idx].cpu().numpy()  # Select best mask
+        logger.debug(
+            f"Mask selection: IoU scores={iou_per_mask.cpu().tolist()}, "
+            f"selected idx={best_mask_idx} with IoU={sam_iou:.3f}"
+        )
     else:
-        # Fallback: use mask confidence heuristic based on mask area ratio
+        # Fallback: select first mask with heuristic IoU
+        mask = pred_masks[0, 0, 0].cpu().numpy()
         mask_area_ratio = (mask > 0).sum() / mask.size
         # Reasonable masks typically cover 1-30% of the image
         sam_iou = min(0.95, max(0.5, 1.0 - abs(mask_area_ratio - 0.10) * 2))
-        logger.debug(f"No IoU score from SAM, estimated from mask area: {sam_iou:.3f}")
+        logger.debug(f"No IoU scores, estimated from mask area: {sam_iou:.3f}")
 
     # Resize mask to original image size if needed
     # SAM outputs 256x256 by default
@@ -272,7 +307,11 @@ def _segment_tumor(
     # Binary threshold
     binary_mask = (mask > 0).astype(np.uint8)
 
-    logger.info(f"Segmentation complete: mask_pixels={binary_mask.sum()}, iou={sam_iou:.3f}")
+    elapsed = time.perf_counter() - start_time
+    logger.info(
+        f"Segmentation complete: mask_pixels={binary_mask.sum()}, "
+        f"iou={sam_iou:.3f}, time={elapsed:.3f}s"
+    )
     return binary_mask, sam_iou
 
 
@@ -280,7 +319,7 @@ def run_pipeline(
     image: np.ndarray,
     yolo: "YOLO",
     sam_processor: "SamProcessor",
-    sam_model: "SamModel",
+    sam_model: "SamFineTuner",
 ) -> PipelineResult:
     """Execute YOLO → SAM inference pipeline.
 
@@ -291,14 +330,13 @@ def run_pipeline(
         image: Input image as numpy array (H, W, 3) RGB.
         yolo: Loaded YOLO model instance.
         sam_processor: Loaded SAM processor instance.
-        sam_model: Loaded SAM model instance.
+        sam_model: Loaded SAM model instance (SamFineTuner).
 
     Returns:
         PipelineResult with detection/segmentation results.
     """
     try:
         logger.info("Starting pipeline execution...")
-
         # Stage 1: Detection
         box, yolo_conf = _detect_tumor(image, yolo)
         if box is None:
@@ -331,9 +369,14 @@ def run_pipeline(
 __all__ = [
     "CONFIDENCE_AUTO_APPROVED",
     "CONFIDENCE_NEEDS_REVIEW",
+    "MASK_BINARY_THRESHOLD",
+    "SAM_BASE_MODEL_ID",
+    "SAM_MODEL_PATH",
     "YOLO_MIN_CONFIDENCE",
+    "YOLO_MODEL_PATH",
     "PipelineResult",
     "_detect_tumor",
+    "_segment_tumor",
     "load_models",
     "run_pipeline",
 ]

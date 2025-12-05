@@ -7,3 +7,13 @@ Makefile.local
 models/
 
 outputs/
+
+data/images_test/
+data/images_train/
+data/masks_test/
+data/masks_train/
+data/metadata_test.json
+data/metadata_train.json
+data/run.txt
+
+local/

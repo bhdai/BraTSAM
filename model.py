@@ -54,22 +54,34 @@ class SamFineTuner(nn.Module):
                 ):
                     param.requires_grad = False
 
-    def forward(self, pixel_values, input_boxes):
+    def forward(self, pixel_values, input_boxes, full_outputs=False):
         """
         forward pass through the SAM model
 
         Args:
             pixel_values (torch.Tensor): the preprocessed image tensor
             input_boxes (torch.Tensor): the bounding box prompt tensor
+            full_outputs (bool): if True, return dict with mask and IoU scores
+                                 for smart mask selection; if False, return only
+                                 the first predicted mask (legacy behavior)
 
         Returns:
-            torch.Tensor: The predicted masks
+            If full_outputs=False: torch.Tensor - predicted masks [:, 0, 0, :, :]
+            If full_outputs=True: dict with:
+                - 'pred_masks': torch.Tensor [B, N, M, H, W] - all mask proposals
+                - 'iou_scores': torch.Tensor [B, N, M] - IoU scores for each mask
         """
         outputs = self.model(
             pixel_values=pixel_values, input_boxes=input_boxes
         )  # [B, N, M, H, W] where N is number of input prompts, M is number of mask proposals (3 by default)
 
-        # select the first mask and add channel dimension
+        if full_outputs:
+            return {
+                'pred_masks': outputs.pred_masks,
+                'iou_scores': outputs.iou_scores,
+            }
+
+        # Legacy behavior: select the first mask
         predicted_masks = outputs.pred_masks[:, 0, 0, :, :]
 
         return predicted_masks
