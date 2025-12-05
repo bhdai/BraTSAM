@@ -299,6 +299,9 @@ def _segment_tumor(
     """
     start_time = time.perf_counter()
 
+    # Store original image size for proper mask resizing
+    original_size = (image.shape[0], image.shape[1])  # (H, W)
+
     # Preprocess image
     inputs = sam_processor(
         images=image,
@@ -331,30 +334,43 @@ def _segment_tumor(
         iou_per_mask = iou_scores[0, 0]  # shape: [M=3]
         best_mask_idx = int(iou_per_mask.argmax().item())
         sam_iou = float(iou_per_mask[best_mask_idx].cpu().item())
-        mask = pred_masks[0, 0, best_mask_idx].cpu().numpy()  # Select best mask
+        # Keep best mask as tensor for proper post-processing
+        best_mask_tensor = pred_masks[:, :, best_mask_idx:best_mask_idx+1, :, :]
         logger.debug(
             f"Mask selection: IoU scores={iou_per_mask.cpu().tolist()}, "
             f"selected idx={best_mask_idx} with IoU={sam_iou:.3f}"
         )
     else:
         # Fallback: select first mask with heuristic IoU
-        mask = pred_masks[0, 0, 0].cpu().numpy()
-        mask_area_ratio = (mask > 0).sum() / mask.size
+        best_mask_tensor = pred_masks[:, :, 0:1, :, :]
+        mask_np = best_mask_tensor[0, 0, 0].cpu().numpy()
+        mask_area_ratio = (mask_np > 0).sum() / mask_np.size
         # Reasonable masks typically cover 1-30% of the image
         sam_iou = min(0.95, max(0.5, 1.0 - abs(mask_area_ratio - 0.10) * 2))
         logger.debug(f"No IoU scores, estimated from mask area: {sam_iou:.3f}")
 
-    # Resize mask to original image size if needed
-    # SAM outputs 256x256 by default
-    if mask.shape != image.shape[:2]:
-        mask_pil = PILImage.fromarray((mask > 0).astype(np.uint8) * 255)
-        mask_pil = mask_pil.resize(
-            (image.shape[1], image.shape[0]), PILImage.NEAREST
-        )
-        mask = np.array(mask_pil) > MASK_BINARY_THRESHOLD
-
-    # Binary threshold
-    binary_mask = (mask > 0).astype(np.uint8)
+    # Use SAM processor's post_process_masks for proper alignment
+    # This handles the coordinate transformation from model space to original image space
+    reshaped_input_sizes = inputs.get("reshaped_input_sizes", None)
+    if reshaped_input_sizes is not None:
+        reshaped_input_sizes = [tuple(s.tolist()) for s in reshaped_input_sizes]
+    else:
+        # Fallback: SAM uses 1024x1024 input size
+        reshaped_input_sizes = [(1024, 1024)]
+    
+    original_sizes = [original_size]  # List of (H, W) tuples
+    
+    # Post-process masks to original image size
+    processed_masks = sam_processor.image_processor.post_process_masks(
+        masks=best_mask_tensor.cpu(),
+        original_sizes=original_sizes,
+        reshaped_input_sizes=reshaped_input_sizes,
+        binarize=True,
+        mask_threshold=0.0,
+    )
+    
+    # Extract the binary mask (first batch, first prompt, first mask)
+    binary_mask = processed_masks[0][0, 0].numpy().astype(np.uint8)
 
     elapsed = time.perf_counter() - start_time
     logger.info(
