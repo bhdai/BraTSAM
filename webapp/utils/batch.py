@@ -29,6 +29,8 @@ class BatchItem:
         result: PipelineResult from inference (contains confidence/classification).
         status: Review status - one of "pending", "approved", "rejected", "edited".
         user_box: Manual bounding box override [x_min, y_min, x_max, y_max], if edited.
+        slice_index: Optional slice index for 3D volume tracking.
+        timestamp: Creation time for the batch item (epoch seconds).
 
     Example:
         >>> item = BatchItem(
@@ -44,6 +46,8 @@ class BatchItem:
     result: "PipelineResult"
     status: str = "pending"  # "pending" | "approved" | "rejected" | "edited"
     user_box: list[int] | None = None  # Manual override box
+    slice_index: int | None = None  # 3D volume slice tracking
+    timestamp: float | None = None  # Creation time (epoch seconds)
 
     @property
     def classification(self) -> str:
