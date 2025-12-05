@@ -563,3 +563,308 @@ class TestOverlayIntegration:
 
             mock_st.image.assert_called_once()
 
+
+class TestZoomState:
+    """Tests for zoom state management (Story 3.3, AC #1)."""
+
+    def test_init_zoom_state_creates_defaults(self) -> None:
+        """init_zoom_state should initialize with default values."""
+        from webapp.components.viewer import init_zoom_state
+
+        state = init_zoom_state()
+
+        assert state["level"] == 1.0
+        assert state["offset_x"] == 0
+        assert state["offset_y"] == 0
+        assert state["min_zoom"] == 0.25
+        assert state["max_zoom"] == 4.0
+
+    def test_zoom_in_increases_level(self) -> None:
+        """zoom_in should increase zoom level by step."""
+        from webapp.components.viewer import init_zoom_state, zoom_in
+
+        state = init_zoom_state()
+        new_state = zoom_in(state)
+
+        assert new_state["level"] > state["level"]
+        assert new_state["level"] == 1.25  # Default step is 0.25
+
+    def test_zoom_out_decreases_level(self) -> None:
+        """zoom_out should decrease zoom level by step."""
+        from webapp.components.viewer import init_zoom_state, zoom_out
+
+        state = init_zoom_state()
+        new_state = zoom_out(state)
+
+        assert new_state["level"] < state["level"]
+        assert new_state["level"] == 0.75
+
+    def test_zoom_in_respects_max_limit(self) -> None:
+        """zoom_in should not exceed max_zoom limit (AC #1)."""
+        from webapp.components.viewer import init_zoom_state, zoom_in
+
+        state = init_zoom_state()
+        state["level"] = 3.9  # Near max
+
+        new_state = zoom_in(state)
+
+        assert new_state["level"] <= state["max_zoom"]
+        assert new_state["level"] == 4.0  # Clamped to max
+
+    def test_zoom_out_respects_min_limit(self) -> None:
+        """zoom_out should not go below min_zoom limit (AC #1)."""
+        from webapp.components.viewer import init_zoom_state, zoom_out
+
+        state = init_zoom_state()
+        state["level"] = 0.3  # Near min
+
+        new_state = zoom_out(state)
+
+        assert new_state["level"] >= state["min_zoom"]
+        assert new_state["level"] == 0.25  # Clamped to min
+
+    def test_get_zoom_display_formats_correctly(self) -> None:
+        """get_zoom_display should format zoom as percentage (AC #1)."""
+        from webapp.components.viewer import get_zoom_display, init_zoom_state
+
+        state = init_zoom_state()
+        state["level"] = 1.5
+
+        display = get_zoom_display(state)
+
+        assert display == "150%"
+
+    def test_get_zoom_display_at_100_percent(self) -> None:
+        """get_zoom_display should show '100%' at default zoom."""
+        from webapp.components.viewer import get_zoom_display, init_zoom_state
+
+        state = init_zoom_state()
+        display = get_zoom_display(state)
+
+        assert display == "100%"
+
+
+class TestPanState:
+    """Tests for pan state management (Story 3.3, AC #2)."""
+
+    def test_update_pan_offset_sets_values(self) -> None:
+        """update_pan_offset should set offset values."""
+        from webapp.components.viewer import init_zoom_state, update_pan_offset
+
+        state = init_zoom_state()
+        new_state = update_pan_offset(state, 50, -30)
+
+        assert new_state["offset_x"] == 50
+        assert new_state["offset_y"] == -30
+
+    def test_pan_offset_constrained_to_bounds(self) -> None:
+        """Pan offset should be constrained to keep image visible (AC #2)."""
+        from webapp.components.viewer import (
+            constrain_pan_offset,
+            init_zoom_state,
+        )
+
+        state = init_zoom_state()
+        state["level"] = 2.0  # Zoomed in
+
+        # Try to pan way off screen
+        constrained = constrain_pan_offset(
+            state, offset_x=10000, offset_y=10000, image_width=256, image_height=256
+        )
+
+        # Should be constrained to reasonable bounds
+        assert constrained["offset_x"] < 10000
+        assert constrained["offset_y"] < 10000
+
+
+class TestResetZoom:
+    """Tests for reset functionality (Story 3.3, AC #5)."""
+
+    def test_reset_zoom_restores_defaults(self) -> None:
+        """reset_zoom should restore zoom=1.0 and offset=0 (AC #5)."""
+        from webapp.components.viewer import init_zoom_state, reset_zoom
+
+        state = init_zoom_state()
+        state["level"] = 2.5
+        state["offset_x"] = 100
+        state["offset_y"] = -50
+
+        reset_state = reset_zoom(state)
+
+        assert reset_state["level"] == 1.0
+        assert reset_state["offset_x"] == 0
+        assert reset_state["offset_y"] == 0
+        # Limits should be preserved
+        assert reset_state["min_zoom"] == 0.25
+        assert reset_state["max_zoom"] == 4.0
+
+
+class TestZoomableViewer:
+    """Tests for interactive zoom/pan viewer (Story 3.3, AC #3, #4, #6)."""
+
+    def test_render_zoomable_viewer_returns_html(self) -> None:
+        """render_zoomable_viewer should produce HTML component."""
+        from webapp.components.viewer import init_zoom_state, render_zoomable_viewer
+
+        image = Image.new("RGB", (100, 100), color="white")
+        state = init_zoom_state()
+
+        with patch("webapp.components.viewer.components") as mock_components:
+            mock_components.html = MagicMock()
+
+            render_zoomable_viewer(image, state)
+
+            mock_components.html.assert_called_once()
+
+    def test_render_zoomable_viewer_with_overlays_preserves_alignment(self) -> None:
+        """Overlays should remain aligned at different zoom levels (AC #3)."""
+        from webapp.components.viewer import (
+            _composite_overlays,
+            init_zoom_state,
+            render_zoomable_viewer,
+        )
+        from webapp.utils.inference import PipelineResult
+
+        image = Image.new("RGB", (100, 100), color="white")
+        mask = np.zeros((100, 100), dtype=np.uint8)
+        mask[25:75, 25:75] = 255
+
+        result = PipelineResult(
+            success=True,
+            stage="segmentation",
+            yolo_box=[30, 30, 70, 70],
+            sam_mask=mask,
+        )
+
+        # Composite overlays first (as viewer does)
+        composited = _composite_overlays(image, result, show_box=True, show_mask=True)
+
+        state = init_zoom_state()
+        state["level"] = 2.0  # 200% zoom
+
+        with patch("webapp.components.viewer.components") as mock_components:
+            mock_components.html = MagicMock()
+
+            render_zoomable_viewer(composited, state)
+
+            # Verify HTML was generated with zoom transform
+            call_args = mock_components.html.call_args[0][0]
+            assert "scale(2.0)" in call_args or "scale(2)" in call_args
+
+    def test_initial_display_fits_container(self) -> None:
+        """Image should initially display at fit-to-container size (AC #6)."""
+        from webapp.components.viewer import init_zoom_state
+
+        state = init_zoom_state()
+
+        # Default zoom level should be 1.0 (fit)
+        assert state["level"] == 1.0
+
+
+class TestZoomControls:
+    """Tests for zoom control buttons and indicator (Story 3.3, AC #1, #5, #6)."""
+
+    def test_render_zoom_controls_initializes_state(self) -> None:
+        """render_zoom_controls should initialize state in session_state."""
+        with patch("webapp.components.viewer.st") as mock_st:
+            mock_st.session_state = {}
+            mock_st.columns = MagicMock(return_value=[MagicMock()] * 4)
+            mock_st.button = MagicMock(return_value=False)
+            mock_st.markdown = MagicMock()
+
+            from webapp.components.viewer import render_zoom_controls
+
+            render_zoom_controls(session_key="test_zoom")
+
+            assert "test_zoom" in mock_st.session_state
+
+    def test_render_zoom_controls_displays_level(self) -> None:
+        """render_zoom_controls should display current zoom level (AC #1)."""
+        with patch("webapp.components.viewer.st") as mock_st:
+            mock_st.session_state = {}
+            mock_st.columns = MagicMock(return_value=[MagicMock()] * 4)
+            mock_st.button = MagicMock(return_value=False)
+            mock_st.markdown = MagicMock()
+
+            from webapp.components.viewer import render_zoom_controls
+
+            render_zoom_controls()
+
+            # Verify markdown was called with zoom level
+            mock_st.markdown.assert_called()
+            call_args = str(mock_st.markdown.call_args)
+            assert "100%" in call_args or "Zoom" in call_args
+
+
+class TestInteractiveViewer:
+    """Tests for render_interactive_viewer (Story 3.3, AC #6)."""
+
+    def test_interactive_viewer_with_zoom_enabled(self) -> None:
+        """render_interactive_viewer should render zoom controls when enabled."""
+        with patch("webapp.components.viewer.st") as mock_st:
+            with patch("webapp.components.viewer.components") as mock_components:
+                mock_st.session_state = {}
+                mock_st.columns = MagicMock(return_value=[MagicMock()] * 4)
+                mock_st.button = MagicMock(return_value=False)
+                mock_st.markdown = MagicMock()
+                mock_st.caption = MagicMock()
+                mock_st.error = MagicMock()
+                mock_components.html = MagicMock()
+
+                test_image = np.zeros((256, 256), dtype=np.uint8)
+
+                from webapp.components.viewer import render_interactive_viewer
+
+                render_interactive_viewer(
+                    test_image, enable_zoom_pan=True, caption="Test"
+                )
+
+                # Should have rendered HTML component (zoomable viewer)
+                mock_components.html.assert_called_once()
+
+    def test_interactive_viewer_fallback_when_disabled(self) -> None:
+        """render_interactive_viewer should fall back to st.image when disabled."""
+        with patch("webapp.components.viewer.st") as mock_st:
+            mock_st.image = MagicMock()
+            mock_st.error = MagicMock()
+
+            test_image = np.zeros((256, 256), dtype=np.uint8)
+
+            from webapp.components.viewer import render_interactive_viewer
+
+            render_interactive_viewer(test_image, enable_zoom_pan=False)
+
+            # Should have used st.image (static viewer)
+            mock_st.image.assert_called_once()
+
+    def test_interactive_viewer_backward_compatible(self) -> None:
+        """render_interactive_viewer should be backward compatible with old API."""
+        with patch("webapp.components.viewer.st") as mock_st:
+            mock_st.image = MagicMock()
+            mock_st.error = MagicMock()
+
+            test_image = np.zeros((256, 256), dtype=np.uint8)
+
+            from webapp.components.viewer import render_interactive_viewer
+            from webapp.utils.inference import PipelineResult
+
+            result = PipelineResult(
+                success=True,
+                stage="segmentation",
+                yolo_box=[10, 10, 50, 50],
+                sam_mask=np.zeros((256, 256), dtype=np.uint8),
+            )
+
+            # Should not raise with all parameters
+            render_interactive_viewer(
+                test_image,
+                result=result,
+                caption="Test",
+                show_box=True,
+                show_mask=True,
+                enable_zoom_pan=False,
+            )
+
+            mock_st.image.assert_called_once()
+
+

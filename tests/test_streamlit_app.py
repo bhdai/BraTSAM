@@ -163,11 +163,14 @@ def test_webapp_app_imports_render_image_viewer():
 
 
 def test_webapp_app_uses_render_image_viewer():
-    """Story 3.1 AC #5: webapp/app.py should use render_image_viewer for display."""
+    """Story 3.1 AC #5: webapp/app.py should use viewer component for display.
+    
+    Updated for Story 3.3: Now checks for render_interactive_viewer or render_image_viewer.
+    """
     app_content = Path("webapp/app.py").read_text()
 
-    assert "render_image_viewer(" in app_content, (
-        "webapp/app.py should use render_image_viewer function for image display"
+    assert "render_interactive_viewer(" in app_content or "render_image_viewer(" in app_content, (
+        "webapp/app.py should use viewer function (render_image_viewer or render_interactive_viewer) for image display"
     )
 
 

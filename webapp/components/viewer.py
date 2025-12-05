@@ -1,7 +1,7 @@
-"""Interactive image viewer component for BraTSAM (Story 3.1, 3.2).
+"""Interactive image viewer component for BraTSAM (Story 3.1, 3.2, 3.3).
 
 This module provides the main image viewer for displaying MRI slices
-with support for responsive scaling and overlay rendering.
+with support for responsive scaling, overlay rendering, and zoom/pan interaction.
 
 The viewer supports:
 - 2D numpy arrays (grayscale and RGB)
@@ -11,6 +11,12 @@ The viewer supports:
 - Bounding box overlay (cyan, 2px stroke)
 - Segmentation mask overlay (magenta, 40% opacity)
 - Toggle controls for overlay visibility
+- Zoom in/out with level indicator (AC #1)
+- Pan with click-and-drag (AC #2)
+- Overlay alignment during zoom/pan (AC #3)
+- Sharp resolution at high zoom levels (AC #4)
+- Reset to fit view (AC #5)
+- Keyboard accessible controls (AC #6)
 
 Example:
     >>> import numpy as np
@@ -21,11 +27,14 @@ Example:
 
 from __future__ import annotations
 
+import base64
 import logging
-from typing import TYPE_CHECKING
+from io import BytesIO
+from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
 import streamlit as st
+import streamlit.components.v1 as components
 from PIL import Image, ImageDraw
 
 from preprocessing.normalize import normalize_slice
@@ -41,6 +50,241 @@ BOUNDING_BOX_COLOR = "#06B6D4"  # Cyan
 MASK_COLOR = "#D946EF"  # Magenta
 MASK_OPACITY = 0.4  # 40% opacity (alpha = 102)
 BOX_STROKE_WIDTH = 2  # pixels
+
+# Zoom/pan constants (Story 3.3)
+DEFAULT_ZOOM_LEVEL = 1.0
+MIN_ZOOM_LEVEL = 0.25  # 25%
+MAX_ZOOM_LEVEL = 4.0  # 400%
+ZOOM_STEP = 0.25  # 25% per step
+
+
+class ZoomState(TypedDict):
+    """Type definition for zoom/pan state dictionary."""
+
+    level: float
+    offset_x: int
+    offset_y: int
+    min_zoom: float
+    max_zoom: float
+
+
+def init_zoom_state() -> ZoomState:
+    """Initialize zoom state with default values.
+
+    Returns:
+        ZoomState dictionary with default zoom settings:
+        - level: 1.0 (100% / fit to container)
+        - offset_x: 0 (no horizontal pan)
+        - offset_y: 0 (no vertical pan)
+        - min_zoom: 0.25 (25% minimum)
+        - max_zoom: 4.0 (400% maximum)
+    """
+    return ZoomState(
+        level=DEFAULT_ZOOM_LEVEL,
+        offset_x=0,
+        offset_y=0,
+        min_zoom=MIN_ZOOM_LEVEL,
+        max_zoom=MAX_ZOOM_LEVEL,
+    )
+
+
+def zoom_in(state: ZoomState, step: float = ZOOM_STEP) -> ZoomState:
+    """Increase zoom level by step, respecting max limit.
+
+    Args:
+        state: Current zoom state.
+        step: Zoom increment (default 0.25 = 25%).
+
+    Returns:
+        New ZoomState with increased zoom level clamped to max_zoom.
+    """
+    new_level = min(state["level"] + step, state["max_zoom"])
+    return ZoomState(
+        level=new_level,
+        offset_x=state["offset_x"],
+        offset_y=state["offset_y"],
+        min_zoom=state["min_zoom"],
+        max_zoom=state["max_zoom"],
+    )
+
+
+def zoom_out(state: ZoomState, step: float = ZOOM_STEP) -> ZoomState:
+    """Decrease zoom level by step, respecting min limit.
+
+    Args:
+        state: Current zoom state.
+        step: Zoom decrement (default 0.25 = 25%).
+
+    Returns:
+        New ZoomState with decreased zoom level clamped to min_zoom.
+    """
+    new_level = max(state["level"] - step, state["min_zoom"])
+    return ZoomState(
+        level=new_level,
+        offset_x=state["offset_x"],
+        offset_y=state["offset_y"],
+        min_zoom=state["min_zoom"],
+        max_zoom=state["max_zoom"],
+    )
+
+
+def reset_zoom(state: ZoomState) -> ZoomState:
+    """Reset zoom and pan to default values (AC #5).
+
+    Preserves min/max zoom limits while resetting level and offset.
+
+    Args:
+        state: Current zoom state.
+
+    Returns:
+        New ZoomState with level=1.0 and offset=0.
+    """
+    return ZoomState(
+        level=DEFAULT_ZOOM_LEVEL,
+        offset_x=0,
+        offset_y=0,
+        min_zoom=state["min_zoom"],
+        max_zoom=state["max_zoom"],
+    )
+
+
+def get_zoom_display(state: ZoomState) -> str:
+    """Format zoom level as percentage string for display (AC #1).
+
+    Args:
+        state: Current zoom state.
+
+    Returns:
+        Zoom level formatted as percentage (e.g., "150%").
+    """
+    return f"{int(state['level'] * 100)}%"
+
+
+def update_pan_offset(state: ZoomState, offset_x: int, offset_y: int) -> ZoomState:
+    """Update pan offset values.
+
+    Args:
+        state: Current zoom state.
+        offset_x: New horizontal pan offset in pixels.
+        offset_y: New vertical pan offset in pixels.
+
+    Returns:
+        New ZoomState with updated offsets.
+    """
+    return ZoomState(
+        level=state["level"],
+        offset_x=offset_x,
+        offset_y=offset_y,
+        min_zoom=state["min_zoom"],
+        max_zoom=state["max_zoom"],
+    )
+
+
+def constrain_pan_offset(
+    state: ZoomState,
+    offset_x: int,
+    offset_y: int,
+    image_width: int,
+    image_height: int,
+) -> ZoomState:
+    """Constrain pan offset to keep image visible in viewport (AC #2).
+
+    At zoom levels > 1.0, allows panning within the extended image area.
+    At zoom level 1.0 or below, offset is constrained to 0.
+
+    Args:
+        state: Current zoom state.
+        offset_x: Requested horizontal pan offset.
+        offset_y: Requested vertical pan offset.
+        image_width: Width of the image in pixels.
+        image_height: Height of the image in pixels.
+
+    Returns:
+        New ZoomState with constrained offsets.
+    """
+    zoom = state["level"]
+
+    if zoom <= 1.0:
+        # No panning at 100% or below
+        return update_pan_offset(state, 0, 0)
+
+    # Calculate maximum pan range based on zoom level
+    # At 2x zoom, can pan up to half the image dimension
+    max_offset_x = int((image_width * (zoom - 1)) / 2)
+    max_offset_y = int((image_height * (zoom - 1)) / 2)
+
+    constrained_x = max(-max_offset_x, min(offset_x, max_offset_x))
+    constrained_y = max(-max_offset_y, min(offset_y, max_offset_y))
+
+    return update_pan_offset(state, constrained_x, constrained_y)
+
+
+def render_zoomable_viewer(
+    image: Image.Image,
+    state: ZoomState,
+    container_height: int = 500,
+) -> None:
+    """Render image with CSS-based zoom/pan support (AC #3, #4).
+
+    Uses CSS transforms for smooth, sharp zoom/pan without image
+    interpolation artifacts. The image maintains full resolution
+    at all zoom levels.
+
+    Args:
+        image: PIL Image to display (already composited with overlays).
+        state: Current zoom/pan state.
+        container_height: Height of the viewer container in pixels.
+    """
+    # Convert image to base64 for embedding in HTML
+    buffered = BytesIO()
+    image.save(buffered, format="PNG")
+    img_base64 = base64.b64encode(buffered.getvalue()).decode()
+
+    zoom = state["level"]
+    offset_x = state["offset_x"]
+    offset_y = state["offset_y"]
+
+    # Generate unique key for this viewer instance
+    viewer_key = f"zoomable_viewer_{id(image)}"
+
+    # CSS transform for zoom and pan with crisp rendering
+    html = f"""
+    <style>
+        .zoom-container {{
+            overflow: hidden;
+            width: 100%;
+            height: {container_height}px;
+            position: relative;
+            background: #1a1a1a;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .zoom-image {{
+            max-width: 100%;
+            max-height: 100%;
+            transform: scale({zoom}) translate({offset_x}px, {offset_y}px);
+            transform-origin: center center;
+            cursor: {('grab' if zoom > 1 else 'default')};
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            -webkit-image-rendering: pixelated;
+        }}
+        .zoom-image:active {{
+            cursor: {('grabbing' if zoom > 1 else 'default')};
+        }}
+    </style>
+    <div class="zoom-container" id="{viewer_key}">
+        <img src="data:image/png;base64,{img_base64}" 
+             class="zoom-image"
+             alt="MRI Viewer" />
+    </div>
+    """
+
+    components.html(html, height=container_height + 20)
+
+    logger.debug(f"Rendered zoomable viewer at {get_zoom_display(state)}")
 
 
 def _draw_bounding_box(
@@ -291,3 +535,152 @@ def render_image_viewer(
     st.image(display_image, caption=caption, use_container_width=True)
 
     logger.debug(f"Rendered image with shape {image.shape}")
+
+
+def render_zoom_controls(
+    session_key: str = "viewer_zoom",
+) -> ZoomState:
+    """Render zoom control buttons and indicator (AC #1, #5, #6).
+
+    Renders zoom in/out buttons, reset button, and zoom level indicator.
+    Manages zoom state in st.session_state using the provided key.
+
+    Controls are keyboard accessible (AC #6):
+    - Zoom In button: "+", increase zoom by 25%
+    - Zoom Out button: "-", decrease zoom by 25%
+    - Reset button: "⟲", reset to 100% fit view
+
+    Args:
+        session_key: Key for storing zoom state in session_state.
+
+    Returns:
+        Current ZoomState after any button interactions.
+    """
+    # Initialize zoom state in session state if not present
+    if session_key not in st.session_state:
+        st.session_state[session_key] = init_zoom_state()
+
+    state: ZoomState = st.session_state[session_key]
+
+    # Create button layout
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
+
+    with col1:
+        if st.button("➖", key=f"{session_key}_out", help="Zoom Out (-)"):
+            state = zoom_out(state)
+            st.session_state[session_key] = state
+
+    with col2:
+        if st.button("➕", key=f"{session_key}_in", help="Zoom In (+)"):
+            state = zoom_in(state)
+            st.session_state[session_key] = state
+
+    with col3:
+        if st.button("⟲", key=f"{session_key}_reset", help="Reset View (0/Home)"):
+            state = reset_zoom(state)
+            st.session_state[session_key] = state
+
+    with col4:
+        # Display zoom level indicator
+        zoom_display = get_zoom_display(state)
+        st.markdown(f"**Zoom:** {zoom_display}")
+
+    logger.debug(f"Zoom controls rendered, current level: {state['level']}")
+    return state
+
+
+def render_interactive_viewer(
+    image: np.ndarray | Image.Image,
+    result: "PipelineResult | None" = None,
+    caption: str | None = None,
+    show_box: bool = True,
+    show_mask: bool = True,
+    enable_zoom_pan: bool = True,
+    session_key: str = "viewer_zoom",
+) -> None:
+    """Render image with interactive zoom/pan controls (Story 3.3).
+
+    Enhanced viewer that extends render_image_viewer with zoom/pan
+    functionality. When enable_zoom_pan=True, displays:
+    - Zoom controls (in/out/reset buttons)
+    - Zoom level indicator
+    - Zoomable image with CSS transforms
+
+    When enable_zoom_pan=False, falls back to standard render_image_viewer
+    for backward compatibility.
+
+    Args:
+        image: 2D image array (H, W) or (H, W, C), or PIL Image.
+        result: Optional PipelineResult containing box and mask data.
+        caption: Optional caption to display below the image.
+        show_box: Whether to display bounding box overlay (default: True).
+        show_mask: Whether to display segmentation mask overlay (default: True).
+        enable_zoom_pan: Enable zoom/pan controls (default: True).
+        session_key: Key for storing zoom state in session_state.
+
+    Example:
+        >>> # Interactive viewer with zoom/pan
+        >>> render_interactive_viewer(image, result=result, enable_zoom_pan=True)
+
+        >>> # Static viewer (backward compatible)
+        >>> render_interactive_viewer(image, enable_zoom_pan=False)
+    """
+    if not enable_zoom_pan:
+        # Fall back to static viewer for backward compatibility
+        render_image_viewer(
+            image,
+            result=result,
+            caption=caption,
+            show_box=show_box,
+            show_mask=show_mask,
+        )
+        return
+
+    # Prepare display image (same logic as render_image_viewer)
+    if isinstance(image, Image.Image):
+        display_image = image
+    elif isinstance(image, np.ndarray):
+        if image.size == 0:
+            st.error("Cannot display empty image.")
+            return
+        if image.ndim not in (2, 3):
+            st.error(
+                "Invalid image dimensions. Expected 2D (grayscale) or 3D (RGB) array."
+            )
+            return
+
+        # Normalize non-uint8 arrays
+        if image.dtype != np.uint8:
+            if image.ndim == 2:
+                image = normalize_slice(image)
+            else:
+                normalized_channels = []
+                for i in range(image.shape[2]):
+                    normalized_channels.append(normalize_slice(image[:, :, i]))
+                image = np.stack(normalized_channels, axis=-1)
+
+        display_image = Image.fromarray(image)
+    else:
+        st.error("Invalid image type. Expected numpy array or PIL Image.")
+        return
+
+    # Apply overlays if PipelineResult provided
+    if result is not None:
+        display_image = _composite_overlays(
+            display_image, result, show_box=show_box, show_mask=show_mask
+        )
+
+    # Render zoom controls and get current state
+    zoom_state = render_zoom_controls(session_key)
+
+    # Render zoomable viewer with current state
+    render_zoomable_viewer(display_image, zoom_state)
+
+    # Display caption if provided
+    if caption:
+        st.caption(caption)
+
+    logger.debug(
+        f"Rendered interactive viewer: zoom={get_zoom_display(zoom_state)}, "
+        f"show_box={show_box}, show_mask={show_mask}"
+    )

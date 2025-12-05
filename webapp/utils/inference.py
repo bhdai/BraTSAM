@@ -118,12 +118,18 @@ class PipelineResult:
     def confidence(self) -> float | None:
         """Combined confidence (minimum of both scores).
 
+        For manual bounding boxes (yolo_confidence=None), returns SAM IoU only.
+
         Returns:
             Minimum of yolo_confidence and sam_iou if both exist,
+            sam_iou if only SAM exists (manual box),
             otherwise yolo_confidence as fallback, or None.
         """
         if self.yolo_confidence is not None and self.sam_iou is not None:
             return min(self.yolo_confidence, self.sam_iou)
+        if self.yolo_confidence is None and self.sam_iou is not None:
+            # Manual box case - use SAM IoU only
+            return self.sam_iou
         return self.yolo_confidence  # Fall back to YOLO if no SAM score
 
     @property
@@ -409,6 +415,52 @@ def run_pipeline(
         )
 
 
+def run_segmentation_only(
+    image: np.ndarray,
+    box: list[int],
+) -> PipelineResult:
+    """Run SAM segmentation with manual bounding box (AC #3, #4).
+
+    Skips YOLO detection stage, uses provided box directly.
+    Confidence is based on SAM IoU only (no YOLO confidence).
+
+    This function is called when the user manually draws a bounding
+    box to correct or override automated detection.
+
+    Args:
+        image: Input image as numpy array (H, W, 3) RGB.
+        box: Bounding box [x_min, y_min, x_max, y_max].
+
+    Returns:
+        PipelineResult with SAM mask and IoU confidence.
+        yolo_confidence will be None to indicate manual box.
+    """
+    try:
+        logger.info(f"Running manual segmentation with box: {box}")
+
+        # Load models (uses cached version in Streamlit)
+        _, sam_processor, sam_model = load_models()
+
+        # Run segmentation directly with provided box
+        mask, sam_iou = _segment_tumor(image, box, sam_processor, sam_model)
+
+        return PipelineResult(
+            success=True,
+            stage="segmentation",
+            yolo_box=box,  # Manual box
+            yolo_confidence=None,  # No YOLO for manual
+            sam_mask=mask,
+            sam_iou=sam_iou,
+        )
+    except Exception as e:
+        logger.error(f"Manual segmentation failed: {e}")
+        return PipelineResult(
+            success=False,
+            stage="segmentation",
+            error_message=f"Segmentation failed: {str(e)}",
+        )
+
+
 __all__ = [
     "CONFIDENCE_AUTO_APPROVED",
     "CONFIDENCE_NEEDS_REVIEW",
@@ -422,4 +474,5 @@ __all__ = [
     "_segment_tumor",
     "load_models",
     "run_pipeline",
+    "run_segmentation_only",
 ]
