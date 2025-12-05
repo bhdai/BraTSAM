@@ -118,14 +118,6 @@ def main() -> None:
         if "show_segmentation_mask" not in st.session_state:
             st.session_state.show_segmentation_mask = True
 
-        # Overlay toggle controls
-        st.subheader("🎛️ Display Options")
-        toggle_col1, toggle_col2 = st.columns(2)
-        with toggle_col1:
-            st.checkbox("Show Bounding Box", key="show_bounding_box")
-        with toggle_col2:
-            st.checkbox("Show Mask", key="show_segmentation_mask")
-
         if isinstance(uploaded, UploadedVolume):
             # 3D Volume handling
             st.info(
@@ -160,19 +152,31 @@ def main() -> None:
             else:
                 result = st.session_state[f"result_{slice_key}"]
             
-            # Display the image with overlays
-            st.subheader("📊 Segmentation Result")
-            render_image_viewer(
-                display_img,
-                result=result,
-                caption=f"{uploaded.filename} - Slice {slice_idx}",
-                show_box=st.session_state.show_bounding_box,
-                show_mask=st.session_state.show_segmentation_mask,
-            )
+            # Two-column layout: image on left, controls/results on right
+            img_col, ctrl_col = st.columns([1, 1])
             
-            # Display inference results if available
-            if result:
-                display_inference_results(result)
+            with img_col:
+                st.subheader("📊 Segmentation Result")
+                render_image_viewer(
+                    display_img,
+                    result=result,
+                    caption=f"{uploaded.filename} - Slice {slice_idx}",
+                    show_box=st.session_state.show_bounding_box,
+                    show_mask=st.session_state.show_segmentation_mask,
+                )
+            
+            with ctrl_col:
+                # Overlay toggle controls
+                st.subheader("🎛️ Display Options")
+                toggle_col1, toggle_col2 = st.columns(2)
+                with toggle_col1:
+                    st.checkbox("Show Bounding Box", key="show_bounding_box")
+                with toggle_col2:
+                    st.checkbox("Show Mask", key="show_segmentation_mask")
+                
+                # Display inference results if available
+                if result:
+                    display_inference_results(result)
             
             # Metadata display
             col1, col2, col3, col4 = st.columns(4)
@@ -216,19 +220,31 @@ def main() -> None:
             else:
                 result = st.session_state[image_key]
             
-            # Display the image with overlays
-            st.subheader("📊 Segmentation Result")
-            render_image_viewer(
-                img_array,
-                result=result,
-                caption=uploaded.filename,
-                show_box=st.session_state.show_bounding_box,
-                show_mask=st.session_state.show_segmentation_mask,
-            )
+            # Two-column layout: image on left, controls/results on right
+            img_col, ctrl_col = st.columns([1, 1])
             
-            # Display inference results if available
-            if result:
-                display_inference_results(result)
+            with img_col:
+                st.subheader("📊 Segmentation Result")
+                render_image_viewer(
+                    img_array,
+                    result=result,
+                    caption=uploaded.filename,
+                    show_box=st.session_state.show_bounding_box,
+                    show_mask=st.session_state.show_segmentation_mask,
+                )
+            
+            with ctrl_col:
+                # Overlay toggle controls
+                st.subheader("🎛️ Display Options")
+                toggle_col1, toggle_col2 = st.columns(2)
+                with toggle_col1:
+                    st.checkbox("Show Bounding Box", key="show_bounding_box")
+                with toggle_col2:
+                    st.checkbox("Show Mask", key="show_segmentation_mask")
+                
+                # Display inference results if available
+                if result:
+                    display_inference_results(result)
             
             col1, col2, col3 = st.columns(3)
             col1.metric("Filename", uploaded.filename)
