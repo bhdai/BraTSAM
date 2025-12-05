@@ -12,34 +12,14 @@ from PIL import Image
 
 from preprocessing.normalize import normalize_slice
 from preprocessing.volume import extract_slice
-from webapp.components.canvas import (
-    cancel_edit_mode,
-    clip_bbox_to_bounds,
-    extract_bbox_from_canvas,
-    init_edit_mode_state,
-    is_edit_mode,
-    render_drawing_canvas,
-    toggle_edit_mode,
-    validate_bbox,
-)
 from webapp.components.confidence_indicator import (
     render_confidence_indicator,
     render_confidence_score,
 )
-from webapp.components.review_queue import render_review_queue
 from webapp.components.slice_selector import render_slice_selector
 from webapp.components.upload import UploadedImage, UploadedVolume, render_upload_component
-from webapp.components.viewer import render_image_viewer, render_interactive_viewer
-from webapp.utils.inference import PipelineResult, run_segmentation_only
-from webapp.utils.session import initialize_batch_state
-from webapp.utils.shortcuts import (
-    handle_approve_shortcut,
-    handle_cancel_shortcut,
-    handle_edit_shortcut,
-    handle_navigation_shortcut,
-    register_shortcuts,
-    render_shortcut_help,
-)
+from webapp.components.viewer import render_image_viewer
+from webapp.utils.inference import PipelineResult, load_models, run_pipeline
 
 # Configure logging (backend)
 logging.basicConfig(
@@ -110,42 +90,13 @@ def main() -> None:
     st.markdown("**Brain Tumor Segmentation with SAM**")
     
     st.sidebar.header("Navigation")
-    st.sidebar.info("Welcome to BraTSAM! Feature components will be added here.")
-    
-    # Keyboard shortcuts help panel (Story 4.3, AC #9)
-    with st.sidebar:
-        render_shortcut_help()
-    
-    # Hidden shortcut buttons (Story 4.3)
-    # These buttons are triggered by keyboard shortcuts via streamlit-shortcuts
-    # They're placed in an empty container to be invisible
-    with st.container():
-        shortcut_cols = st.columns(5)
-        with shortcut_cols[0]:
-            if st.button("Approve", key="btn_approve", help="SPACE"):
-                handle_approve_shortcut()
-        with shortcut_cols[1]:
-            if st.button("Edit", key="btn_edit", help="E"):
-                handle_edit_shortcut()
-        with shortcut_cols[2]:
-            if st.button("◀ Prev", key="btn_prev", help="A or ←"):
-                handle_navigation_shortcut("previous")
-        with shortcut_cols[3]:
-            if st.button("Next ▶", key="btn_next", help="D or →"):
-                handle_navigation_shortcut("next")
-        with shortcut_cols[4]:
-            if st.button("Cancel", key="btn_cancel", help="ESC"):
-                handle_cancel_shortcut()
-    
-    # Register keyboard shortcuts (Story 4.3)
-    register_shortcuts()
+    st.sidebar.info("Upload a brain MRI to begin automatic tumor detection and segmentation.")
     
     st.markdown(
         """
         ## Welcome to BraTSAM
         
-        This application provides a streamlined workflow for brain tumor 
-        segmentation using state-of-the-art deep learning models:
+        This application provides automated brain tumor segmentation:
         
         - **YOLO** for automated tumor detection
         - **SAM** (Segment Anything Model) for precise segmentation
@@ -156,7 +107,7 @@ def main() -> None:
         """
     )
     
-    # Upload section (AC: #1-6)
+    # Upload section
     st.header("📤 Upload Image")
     uploaded = render_upload_component()
     
@@ -166,164 +117,123 @@ def main() -> None:
             st.session_state.show_bounding_box = True
         if "show_segmentation_mask" not in st.session_state:
             st.session_state.show_segmentation_mask = True
-        # Initialize zoom/pan toggle state (Story 3.3)
-        if "enable_zoom_pan" not in st.session_state:
-            st.session_state.enable_zoom_pan = True
 
-        # Queue Master layout: sidebar for review queue (Story 4.2), main area for viewer
-        queue_col, viewer_col = st.columns([1, 3])
-        
-        with queue_col:
-            st.markdown("### 📋 Review Queue")
-            # Initialize batch state for session persistence (Story 4.1)
-            initialize_batch_state()
-            # Render the Queue Master component (Story 4.2)
-            render_review_queue()
-        
-        with viewer_col:
-            # Initialize edit mode state (Story 3.4)
-            init_edit_mode_state()
+        # Overlay toggle controls
+        st.subheader("🎛️ Display Options")
+        toggle_col1, toggle_col2 = st.columns(2)
+        with toggle_col1:
+            st.checkbox("Show Bounding Box", key="show_bounding_box")
+        with toggle_col2:
+            st.checkbox("Show Mask", key="show_segmentation_mask")
 
-            # Overlay toggle controls (Story 3.2, AC #3, #4) + Edit Mode (Story 3.4, AC #1, #6)
-            toggle_col1, toggle_col2, toggle_col3, toggle_col4 = st.columns(4)
-            with toggle_col1:
-                st.checkbox("Show Bounding Box", key="show_bounding_box")
-            with toggle_col2:
-                st.checkbox("Show Mask", key="show_segmentation_mask")
-            with toggle_col3:
-                st.checkbox("Enable Zoom/Pan", key="enable_zoom_pan")
-            with toggle_col4:
-                # Edit mode toggle button (AC #1, #6)
-                if is_edit_mode():
-                    if st.button("❌ Cancel Edit", key="cancel_edit_btn"):
-                        cancel_edit_mode()
-                        st.rerun()
-                else:
-                    if st.button("✏️ Edit", key="edit_mode_btn", help="Draw manual bounding box (E)"):
-                        toggle_edit_mode()
-                        st.rerun()
-
-            # Edit mode indicator (AC #1)
-            if is_edit_mode():
-                st.warning("📝 **Edit Mode Active** - Draw a bounding box around the tumor")
-
-            if isinstance(uploaded, UploadedVolume):
-                # 3D Volume handling (AC: #1, #2, #3, #4, #5)
-                st.info(
-                    f"🔬 3D volume detected: "
-                    f"{uploaded.dimensions[0]}×{uploaded.dimensions[1]}×{uploaded.dimensions[2]}"
-                )
-                
-                # Slice selector (AC: #3, #4) - pass file_id to reset on new volume
-                slice_idx = render_slice_selector(uploaded.num_slices, uploaded.file_id)
-                
-                # Extract and normalize slice (AC: #2, #4)
-                slice_2d = extract_slice(uploaded.volume_data, slice_idx)
-                normalized = normalize_slice(slice_2d)
-                
-                # Convert grayscale to RGB for display
-                display_img = np.stack([normalized, normalized, normalized], axis=-1)
-
-                # Edit mode: show drawing canvas (Story 3.4, AC #2)
-                if is_edit_mode():
-                    # Convert to PIL for canvas background
-                    pil_image = Image.fromarray(display_img)
-                    canvas_result = render_drawing_canvas(pil_image)
-
-                    # Process canvas result (AC #2, #3)
-                    if canvas_result and canvas_result.json_data:
-                        bbox = extract_bbox_from_canvas(canvas_result)
-                        if bbox and validate_bbox(bbox, pil_image.width, pil_image.height):
-                            # Clip bbox to image bounds
-                            bbox = clip_bbox_to_bounds(bbox, pil_image.width, pil_image.height)
-                            st.info(f"📦 Manual box: {bbox}")
-
-                            # Run segmentation button (AC #3)
-                            if st.button("🔬 Run Segmentation", key="run_seg_volume"):
-                                with st.spinner("Running SAM segmentation..."):
-                                    result = run_segmentation_only(display_img, bbox)
-                                    st.session_state.manual_result = result
-                                    cancel_edit_mode()
-                                    st.rerun()
-                else:
-                    # Normal viewer mode (Story 3.1, 3.2, 3.3)
-                    result = st.session_state.get("manual_result")
-                    render_interactive_viewer(
-                        display_img,
-                        result=result,
-                        caption=f"{uploaded.filename} - Slice {slice_idx}",
-                        show_box=st.session_state.show_bounding_box,
-                        show_mask=st.session_state.show_segmentation_mask,
-                        enable_zoom_pan=st.session_state.enable_zoom_pan,
-                    )
-
-                    # Display inference results if available (AC #4)
-                    if result and result.success:
-                        display_inference_results(result)
-                
-                # Metadata display (AC: #5)
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Filename", uploaded.filename)
-                col2.metric("Size", f"{uploaded.file_size_mb:.2f} MB")
-                col3.metric(
-                    "Dimensions",
-                    f"{uploaded.dimensions[0]}×{uploaded.dimensions[1]}×{uploaded.dimensions[2]}",
-                )
-                col4.metric("Current Slice", f"{slice_idx + 1}/{uploaded.num_slices}")
+        if isinstance(uploaded, UploadedVolume):
+            # 3D Volume handling
+            st.info(
+                f"🔬 3D volume detected: "
+                f"{uploaded.dimensions[0]}×{uploaded.dimensions[1]}×{uploaded.dimensions[2]}"
+            )
+            
+            # Slice selector - pass file_id to reset on new volume
+            slice_idx = render_slice_selector(uploaded.num_slices, uploaded.file_id)
+            
+            # Extract and normalize slice
+            slice_2d = extract_slice(uploaded.volume_data, slice_idx)
+            normalized = normalize_slice(slice_2d)
+            
+            # Convert grayscale to RGB for display and inference
+            display_img = np.stack([normalized, normalized, normalized], axis=-1)
+            
+            # Create a unique key for this slice to cache results
+            slice_key = f"{uploaded.file_id}_slice_{slice_idx}"
+            
+            # Run inference automatically if not cached
+            if f"result_{slice_key}" not in st.session_state:
+                with st.spinner("🔬 Running YOLO detection and SAM segmentation..."):
+                    try:
+                        yolo, sam_processor, sam_model = load_models()
+                        result = run_pipeline(display_img, yolo, sam_processor, sam_model)
+                        st.session_state[f"result_{slice_key}"] = result
+                    except Exception as e:
+                        logger.error(f"Inference failed: {e}")
+                        st.error(f"Inference failed: {e}")
+                        result = None
             else:
-                # 2D Image handling (existing behavior) (AC: #6)
-                st.success("✅ Ready to process")
-
-                # Edit mode: show drawing canvas (Story 3.4, AC #2)
-                if is_edit_mode():
-                    # Convert to PIL for canvas background
-                    if isinstance(uploaded.data, np.ndarray):
-                        pil_image = Image.fromarray(uploaded.data)
-                    else:
-                        pil_image = uploaded.data
-
-                    canvas_result = render_drawing_canvas(pil_image)
-
-                    # Process canvas result (AC #2, #3)
-                    if canvas_result and canvas_result.json_data:
-                        bbox = extract_bbox_from_canvas(canvas_result)
-                        if bbox and validate_bbox(bbox, pil_image.width, pil_image.height):
-                            # Clip bbox to image bounds
-                            bbox = clip_bbox_to_bounds(bbox, pil_image.width, pil_image.height)
-                            st.info(f"📦 Manual box: {bbox}")
-
-                            # Run segmentation button (AC #3)
-                            if st.button("🔬 Run Segmentation", key="run_seg_2d"):
-                                with st.spinner("Running SAM segmentation..."):
-                                    # Ensure image is numpy array for inference
-                                    if isinstance(uploaded.data, np.ndarray):
-                                        img_array = uploaded.data
-                                    else:
-                                        img_array = np.array(uploaded.data)
-                                    result = run_segmentation_only(img_array, bbox)
-                                    st.session_state.manual_result = result
-                                    cancel_edit_mode()
-                                    st.rerun()
-                else:
-                    # Normal viewer mode (Story 3.1, 3.2, 3.3)
-                    result = st.session_state.get("manual_result")
-                    render_interactive_viewer(
-                        uploaded.data,
-                        result=result,
-                        caption=uploaded.filename,
-                        show_box=st.session_state.show_bounding_box,
-                        show_mask=st.session_state.show_segmentation_mask,
-                        enable_zoom_pan=st.session_state.enable_zoom_pan,
-                    )
-
-                    # Display inference results if available (AC #4)
-                    if result and result.success:
-                        display_inference_results(result)
-                
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Filename", uploaded.filename)
-                col2.metric("Size", f"{uploaded.file_size_mb:.2f} MB")
-                col3.metric("Dimensions", f"{uploaded.dimensions[1]}x{uploaded.dimensions[0]}")
+                result = st.session_state[f"result_{slice_key}"]
+            
+            # Display the image with overlays
+            st.subheader("📊 Segmentation Result")
+            render_image_viewer(
+                display_img,
+                result=result,
+                caption=f"{uploaded.filename} - Slice {slice_idx}",
+                show_box=st.session_state.show_bounding_box,
+                show_mask=st.session_state.show_segmentation_mask,
+            )
+            
+            # Display inference results if available
+            if result:
+                display_inference_results(result)
+            
+            # Metadata display
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Filename", uploaded.filename)
+            col2.metric("Size", f"{uploaded.file_size_mb:.2f} MB")
+            col3.metric(
+                "Dimensions",
+                f"{uploaded.dimensions[0]}×{uploaded.dimensions[1]}×{uploaded.dimensions[2]}",
+            )
+            col4.metric("Current Slice", f"{slice_idx + 1}/{uploaded.num_slices}")
+        else:
+            # 2D Image handling
+            st.success("✅ 2D image loaded - processing...")
+            
+            # Ensure image is numpy array for inference
+            if isinstance(uploaded.data, np.ndarray):
+                img_array = uploaded.data
+            else:
+                img_array = np.array(uploaded.data)
+            
+            # Ensure RGB format
+            if img_array.ndim == 2:
+                img_array = np.stack([img_array, img_array, img_array], axis=-1)
+            elif img_array.shape[-1] == 4:  # RGBA
+                img_array = img_array[:, :, :3]
+            
+            # Create a unique key for this image to cache results
+            image_key = f"result_{uploaded.file_id}"
+            
+            # Run inference automatically if not cached
+            if image_key not in st.session_state:
+                with st.spinner("🔬 Running YOLO detection and SAM segmentation..."):
+                    try:
+                        yolo, sam_processor, sam_model = load_models()
+                        result = run_pipeline(img_array, yolo, sam_processor, sam_model)
+                        st.session_state[image_key] = result
+                    except Exception as e:
+                        logger.error(f"Inference failed: {e}")
+                        st.error(f"Inference failed: {e}")
+                        result = None
+            else:
+                result = st.session_state[image_key]
+            
+            # Display the image with overlays
+            st.subheader("📊 Segmentation Result")
+            render_image_viewer(
+                img_array,
+                result=result,
+                caption=uploaded.filename,
+                show_box=st.session_state.show_bounding_box,
+                show_mask=st.session_state.show_segmentation_mask,
+            )
+            
+            # Display inference results if available
+            if result:
+                display_inference_results(result)
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Filename", uploaded.filename)
+            col2.metric("Size", f"{uploaded.file_size_mb:.2f} MB")
+            col3.metric("Dimensions", f"{uploaded.dimensions[1]}x{uploaded.dimensions[0]}")
     
     logger.info("BraTSAM main page rendered")
 
